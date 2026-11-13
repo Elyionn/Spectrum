@@ -1,4 +1,4 @@
-name: Build Spectrum v1.3 APK
+name: Build Spectrum v1.4 APK
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="Spectrum_v1.3_Android_Project.zip"
+          ZIP_FILE="Spectrum_v1.4_Android_Project.zip"
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: $ZIP_FILE not found in repository root."
             ls -la
@@ -84,5 +84,4 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
-          
           
