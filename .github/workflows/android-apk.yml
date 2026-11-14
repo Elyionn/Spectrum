@@ -17,12 +17,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify and extract project archive
+      - name: Find, verify and extract project archive
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="$GITHUB_WORKSPACE/Spectrum_v1.5.5_Android_Project(1).zip"
-          test -f "$ZIP_FILE" || { echo "Missing $ZIP_FILE"; ls -lah; exit 1; }
+          ZIP_FILE="$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name 'Spectrum_v1.5.5_Android_Project*.zip' -print -quit)"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Spectrum 1.5.5 project ZIP was not found in repository root."
+            ls -lah "$GITHUB_WORKSPACE"
+            exit 1
+          fi
+          echo "Using archive: $(basename "$ZIP_FILE")"
           unzip -tq "$ZIP_FILE"
           EXTRACT_DIR="$RUNNER_TEMP/spectrum-155"
           mkdir -p "$EXTRACT_DIR"
@@ -125,7 +130,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum_v1.5.5_Android_Project(1).zip
+          name: Spectrum-v1.5.5-debug-APK
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
