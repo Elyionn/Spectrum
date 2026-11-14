@@ -1,3 +1,4 @@
+
 name: Build Spectrum 1.5.3 APK
 
 on:
@@ -21,9 +22,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="$GITHUB_WORKSPACE/Spectrum_v1.5.3_Android_Project.zip"
+          ZIP_FILE="$GITHUB_WORKSPACE/Spectrum_v1.5.3_FIXED_Android_Project.zip"
           if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: Missing Spectrum_v1.5.3_Android_Project.zip in repository root"
+            echo "ERROR: Missing Spectrum_v1.5.3_FIXED_Android_Project.zip in repository root"
             ls -lah "$GITHUB_WORKSPACE"
             exit 1
           fi
