@@ -21,7 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="$GITHUB_WORKSPACE/Spectrum_v1.5.5_Android_Project.zip"
+          ZIP_FILE="$GITHUB_WORKSPACE/Spectrum_v1.5.5_Android_Project(1).zip"
           test -f "$ZIP_FILE" || { echo "Missing $ZIP_FILE"; ls -lah; exit 1; }
           unzip -tq "$ZIP_FILE"
           EXTRACT_DIR="$RUNNER_TEMP/spectrum-155"
