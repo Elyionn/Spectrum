@@ -118,6 +118,18 @@ jobs:
           print("All offline 3D model scripts passed JavaScript syntax checks.")
           PY
 
+      - name: Check Kotlin source for duplicate Compose annotations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          source = Path("app/src/main/java/com/elyionn/spektrum/MainActivity.kt").read_text()
+          if "@Composable\n@Composable" in source:
+              raise SystemExit("Duplicate @Composable annotation found")
+          print("Compose annotation check passed.")
+          PYCODE
+
       - name: Build Spectrum 1.5.2 debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 
