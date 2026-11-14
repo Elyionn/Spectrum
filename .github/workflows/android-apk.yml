@@ -1,5 +1,5 @@
 
-name: Build Spectrum 1.5.3 APK
+name: Build Spectrum 1.5.4 APK
 
 on:
   workflow_dispatch:
@@ -11,27 +11,27 @@ permissions:
 
 jobs:
   build:
-    name: Build Spectrum 1.5.3 Android APK
+    name: Build Spectrum 1.5.4 Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract exact Spectrum 1.5.3 project archive
+      - name: Extract exact Spectrum 1.5.4 project archive
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="$GITHUB_WORKSPACE/Spectrum_v1.5.3_FIXED_Android_Project.zip"
+          ZIP_FILE="$GITHUB_WORKSPACE/Spectrum_v1.5.4_FIXED_Android_Project.zip"
           if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: Missing Spectrum_v1.5.3_FIXED_Android_Project.zip in repository root"
+            echo "ERROR: Missing Spectrum_v1.5.4_FIXED_Android_Project.zip in repository root"
             ls -lah "$GITHUB_WORKSPACE"
             exit 1
           fi
           unzip -tq "$ZIP_FILE"
-          mkdir -p "$RUNNER_TEMP/spectrum-153"
-          unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/spectrum-153"
-          PROJECT_DIR="$RUNNER_TEMP/spectrum-153/Spectrum"
+          mkdir -p "$RUNNER_TEMP/spectrum-154"
+          unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/spectrum-154"
+          PROJECT_DIR="$RUNNER_TEMP/spectrum-154/Spectrum"
           test -f "$PROJECT_DIR/settings.gradle.kts"
           rsync -a --exclude='.github/' "$PROJECT_DIR/" "$GITHUB_WORKSPACE/"
           test -f app/src/main/java/com/elyionn/spektrum/MainActivity.kt
@@ -63,12 +63,12 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Verify project version and archive consistency
+      - name: Verify project version and required files
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 9' app/build.gradle.kts
-          grep -Fq 'versionName = "1.5.3"' app/build.gradle.kts
+          grep -Fq 'versionCode = 10' app/build.gradle.kts
+          grep -Fq 'versionName = "1.5.4"' app/build.gradle.kts
           grep -Fq 'com.android.application") version "8.7.3"' build.gradle.kts
           grep -Fq 'org.jetbrains.kotlin.android") version "2.0.21"' build.gradle.kts
           test -f app/src/main/AndroidManifest.xml
@@ -92,7 +92,9 @@ jobs:
           substitutions = {'$shellJson':'2,8,6', '$atomicNumber':'8', '$symbol':'O', '$isotopeLiteral':'16'}
           with tempfile.TemporaryDirectory() as d:
               for i, script in enumerate(scripts):
-                  for old, new in substitutions.items(): script = script.replace(old, new)
+                  for old, new in substitutions.items():
+                      script = script.replace(old, new)
+                  script = re.sub(r'\$\{[^}]*\}', 'localizedText', script)
                   path = Path(d) / f'model-{i}.js'
                   path.write_text(script, encoding='utf-8')
                   subprocess.run(['node', '--check', str(path)], check=True)
@@ -105,7 +107,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-v1.5.3-debug-APK
+          name: Spectrum-v1.5.4-debug-APK
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
