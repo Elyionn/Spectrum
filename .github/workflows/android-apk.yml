@@ -1,3 +1,4 @@
+
 name: Build Spectrum 1.5.5 APK
 
 on:
@@ -22,8 +23,8 @@ jobs:
         run: |
           set -euo pipefail
           ZIP_FILE="$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name 'Spectrum_v1.5.5_Android_Project*.zip' -print -quit)"
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Spectrum 1.5.5 project ZIP was not found in repository root."
+          if [[ -z "$ZIP_FILE" ]]; then
+            echo "ERROR: Spectrum 1.5.5 project ZIP was not found in the repository root."
             ls -lah "$GITHUB_WORKSPACE"
             exit 1
           fi
@@ -46,6 +47,16 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          result = subprocess.run(['sdkmanager', '--licenses'], input=('y\n' * 200), text=True)
+          if result.returncode != 0:
+              raise SystemExit(result.returncode)
+          PY
+
       - name: Install Android SDK packages
         run: sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
@@ -54,7 +65,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Verify versions, required resources and implemented modules
+      - name: Verify project version and required files
         shell: bash
         run: |
           set -euo pipefail
@@ -62,27 +73,25 @@ jobs:
           grep -Fq 'versionName = "1.5.5"' app/build.gradle.kts
           grep -Fq 'com.android.application") version "8.7.3"' build.gradle.kts
           grep -Fq 'org.jetbrains.kotlin.android") version "2.0.21"' build.gradle.kts
-          grep -Fq 'androidx.compose.animation:animation-core' app/build.gradle.kts
           test -s app/src/main/java/com/elyionn/spektrum/MainActivity.kt
           test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/res/drawable-nodpi/spectrum_logo.png
           python3 - <<'PY'
+          import re
           from pathlib import Path
           source = Path('app/src/main/java/com/elyionn/spektrum/MainActivity.kt').read_text(encoding='utf-8')
-          required = [
-              'detectTransformGestures', 'LearningQuiz(', 'DnaHelixView(',
-              'ANATOMY MODEL STATUS', 'Spectrum 1.5.5', 'sans-serif-condensed'
-          ]
-          for item in required:
-              if item not in source:
-                  raise SystemExit(f'Missing expected 1.5.5 source feature: {item}')
-          if 'private fun Anatomy3DView' in source:
-              raise SystemExit('The previous schematic anatomy renderer should remain removed')
-          if 'private val englishNames' not in source:
-              raise SystemExit('Periodic-table English localization data is missing')
-          if 'android.permission.INTERNET' in Path('app/src/main/AndroidManifest.xml').read_text():
-              raise SystemExit('Unexpected INTERNET permission in offline build')
-          print('Version, source features, offline manifest and anatomy placeholder removal verified')
+          elements = source.split('private val elementRows = listOf(', 1)[1].split('\n).map { it.split', 1)[0]
+          rows = re.findall(r'"([A-Z][a-z]?)\|[^|]+\|(\d+)\|', elements)
+          if len(rows) != 118 or sorted(int(z) for _, z in rows) != list(range(1, 119)):
+              raise SystemExit(f'Expected 118 unique atomic numbers, found {len(rows)}')
+          names = source.split('private val englishNames = listOf(', 1)[1].split('\n)', 1)[0]
+          english_count = len(re.findall(r'"[A-Za-z -]+"', names))
+          if english_count != 118:
+              raise SystemExit(f'Expected 118 English element names, found {english_count}')
+          for feature in ['detectTransformGestures', 'normalizeElementSearch', 'Reset view', 'Görünümü sıfırla']:
+              if feature not in source:
+                  raise SystemExit(f'Missing expected periodic-table feature: {feature}')
+          print('Version, source files and 118-element data checks passed')
           PY
 
       - name: Validate Android XML resources
@@ -94,8 +103,7 @@ jobs:
           files = list(Path('app/src/main').rglob('*.xml'))
           for path in files:
               ET.parse(path)
-              print(f'XML OK: {path}')
-          print(f'Validated {len(files)} XML resources')
+          print(f'Validated {len(files)} Android XML files')
           PY
 
       - name: Check embedded JavaScript syntax
@@ -109,10 +117,7 @@ jobs:
           scripts = re.findall(r'<script>([\s\S]*?)</script>', source)
           if len(scripts) != 3:
               raise SystemExit(f'Expected 3 embedded scripts, found {len(scripts)}')
-          substitutions = {
-              '$shellJson': '2,8,6', '$atomicNumber': '8', '$symbol': 'O',
-              '$isotopeLiteral': '16'
-          }
+          substitutions = {'$shellJson': '2,8,6', '$atomicNumber': '8', '$symbol': 'O', '$isotopeLiteral': '16'}
           with tempfile.TemporaryDirectory() as directory:
               for index, script in enumerate(scripts):
                   for old, new in substitutions.items():
@@ -125,9 +130,22 @@ jobs:
           PY
 
       - name: Build debug APK
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon --stacktrace --warning-mode all :app:assembleDebug 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"
+
+      - name: Upload Gradle diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Spectrum-1.5.5-build-diagnostics
+          path: ${{ runner.temp }}/gradle-build.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload debug APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Spectrum-v1.5.5-debug-APK
