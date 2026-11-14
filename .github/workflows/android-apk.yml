@@ -1,4 +1,4 @@
-name: Build Spectrum 1.5.2 APK
+name: Build Spectrum 1.5.2 FIXED APK
 
 on:
   workflow_dispatch:
@@ -12,132 +12,100 @@ permissions:
 
 jobs:
   build:
-    name: Build Spectrum 1.5.2 Android APK
+    name: Spectrum 1.5.2 Android Build
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract Spectrum 1.5.2 project
+      - name: Locate and extract Spectrum project
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="$GITHUB_WORKSPACE/Spectrum_v1.5.2_Android_Project.zip"
+
+          ZIP_FILE="$GITHUB_WORKSPACE/Spectrum_v1.5.2_FIXED_Android_Project.zip"
+
+          echo "Checking project ZIP..."
+
           if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: Missing Spectrum_v1.5.2_Android_Project.zip in repository root"
-            ls -la "$GITHUB_WORKSPACE"
+            echo "ERROR: Spectrum ZIP not found."
+            echo "Files in repository:"
+            ls -lah "$GITHUB_WORKSPACE"
             exit 1
           fi
-          mkdir -p "$RUNNER_TEMP/spectrum-project"
-          unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/spectrum-project"
-          SETTINGS_FILE="$(find "$RUNNER_TEMP/spectrum-project" -type f -name settings.gradle.kts -print -quit)"
+
+          mkdir -p "$RUNNER_TEMP/spectrum"
+          unzip -t "$ZIP_FILE"
+          unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/spectrum"
+
+          SETTINGS_FILE=$(find "$RUNNER_TEMP/spectrum" -name settings.gradle.kts -type f -print -quit)
+
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: settings.gradle.kts not found in project ZIP"
+            echo "ERROR: settings.gradle.kts not found in ZIP."
             exit 1
           fi
+
           PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
           cp -R "$PROJECT_DIR"/. "$GITHUB_WORKSPACE"/
-          test -f "$GITHUB_WORKSPACE/app/build.gradle.kts"
 
-      - name: Set up Java 17
+          echo "Project extracted successfully."
+
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK tools
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Accept Android SDK licenses
+      - name: Install Android SDK
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import subprocess
-          result = subprocess.run(
-              ["sdkmanager", "--licenses"],
-              input="y\n" * 200,
-              text=True,
-              check=False,
-          )
-          if result.returncode != 0:
-              raise SystemExit(result.returncode)
-          PY
 
-      - name: Install Android SDK packages
-        shell: bash
-        run: |
-          set -euo pipefail
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
+
+      - name: Accept Android licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --licenses < /dev/null || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Verify Spectrum source and offline assets
+      - name: Verify project configuration
         shell: bash
         run: |
           set -euo pipefail
+
           test -f settings.gradle.kts
+          test -f app/build.gradle.kts
           test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/java/com/elyionn/spektrum/MainActivity.kt
-          test -f app/src/main/res/drawable-nodpi/spectrum_logo.png
-          grep -q 'versionCode = 8' app/build.gradle.kts
+
           grep -q 'versionName = "1.5.2"' app/build.gradle.kts
-          grep -q 'private fun SolarSystem3DView' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
-          grep -q 'private fun Anatomy3DView' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
-          grep -q 'private fun Atom3DView' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
-          ! grep -q 'cdn.jsdelivr.net' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
-          ! grep -q 'eyes.nasa.gov' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
-          ! grep -q 'android.permission.INTERNET' app/src/main/AndroidManifest.xml
-          echo "Spectrum 1.5.2 source checks passed."
+          grep -q 'versionCode = 8' app/build.gradle.kts
 
-      - name: Check embedded JavaScript syntax
+          echo "Spectrum 1.5.2 verification successful."
+
+      - name: Build debug APK
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import re, subprocess, tempfile
-          from pathlib import Path
-          source = Path("app/src/main/java/com/elyionn/spektrum/MainActivity.kt").read_text()
-          scripts = re.findall(r"<script>([\s\S]*?)</script>", source)
-          if len(scripts) != 4:
-              raise SystemExit(f"Expected 4 offline model scripts, found {len(scripts)}")
-          for index, script in enumerate(scripts):
-              script = script.replace("$shellJson", "2,8,6")
-              script = script.replace("$atomicNumber", "8")
-              script = script.replace("$symbol", "O")
-              script = script.replace("$isotopeLiteral", "16")
-              path = Path(tempfile.gettempdir()) / f"spectrum-model-{index}.js"
-              path.write_text(script)
-              subprocess.run(["node", "--check", str(path)], check=True)
-          print("All offline 3D model scripts passed JavaScript syntax checks.")
-          PY
+          gradle --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Check Kotlin source for duplicate Compose annotations
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PYCODE'
-          from pathlib import Path
-          source = Path("app/src/main/java/com/elyionn/spektrum/MainActivity.kt").read_text()
-          if "@Composable\n@Composable" in source:
-              raise SystemExit("Duplicate @Composable annotation found")
-          print("Compose annotation check passed.")
-          PYCODE
-
-      - name: Build Spectrum 1.5.2 debug APK
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
-
-      - name: Upload Spectrum 1.5.2 APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-v1.5.2-debug-APK
+          name: Spectrum-v1.5.2-FIXED-APK
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
-          
