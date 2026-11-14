@@ -125,7 +125,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-v1.5.5-debug-APK
+          name: Spectrum_v1.5.5_Android_Project(1).zip
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
