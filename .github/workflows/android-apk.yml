@@ -1,5 +1,4 @@
-
-name: Build Spectrum 1.5.4 Patch APK
+name: Build Spectrum 1.5.5 APK
 
 on:
   workflow_dispatch:
@@ -11,10 +10,9 @@ permissions:
 
 jobs:
   build:
-    name: Build Spectrum 1.5.4 Patch Android APK
+    name: Validate and build Spectrum 1.5.5
     runs-on: ubuntu-latest
-    timeout-minutes: 40
-
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,24 +21,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="$GITHUB_WORKSPACE/Spectrum_v1.5.4_PATCH_Android_Project.zip"
-
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: Project ZIP not found"
-            ls -lah "$GITHUB_WORKSPACE"
-            exit 1
-          fi
-
+          ZIP_FILE="$GITHUB_WORKSPACE/Spectrum_v1.5.5_Android_Project.zip"
+          test -f "$ZIP_FILE" || { echo "Missing $ZIP_FILE"; ls -lah; exit 1; }
           unzip -tq "$ZIP_FILE"
-
-          EXTRACT_DIR="$RUNNER_TEMP/spectrum-154-patch"
+          EXTRACT_DIR="$RUNNER_TEMP/spectrum-155"
           mkdir -p "$EXTRACT_DIR"
           unzip -q "$ZIP_FILE" -d "$EXTRACT_DIR"
-
           PROJECT_DIR="$EXTRACT_DIR/Spectrum"
           test -f "$PROJECT_DIR/settings.gradle.kts"
           test -f "$PROJECT_DIR/app/src/main/java/com/elyionn/spektrum/MainActivity.kt"
-
           cp -a "$PROJECT_DIR/." "$GITHUB_WORKSPACE/"
 
       - name: Set up Java 17
@@ -52,76 +41,83 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Accept Android SDK licenses
-        shell: bash
-        run: |
-          set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-
       - name: Install Android SDK packages
         run: sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Verify project version and required files
+      - name: Verify versions, required resources and implemented modules
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 11' app/build.gradle.kts
-          grep -Fq 'versionName = "1.5.4"' app/build.gradle.kts
+          grep -Fq 'versionCode = 12' app/build.gradle.kts
+          grep -Fq 'versionName = "1.5.5"' app/build.gradle.kts
           grep -Fq 'com.android.application") version "8.7.3"' build.gradle.kts
           grep -Fq 'org.jetbrains.kotlin.android") version "2.0.21"' build.gradle.kts
+          grep -Fq 'androidx.compose.animation:animation-core' app/build.gradle.kts
+          test -s app/src/main/java/com/elyionn/spektrum/MainActivity.kt
           test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/res/drawable-nodpi/spectrum_logo.png
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('app/src/main/java/com/elyionn/spektrum/MainActivity.kt').read_text(encoding='utf-8')
+          required = [
+              'detectTransformGestures', 'LearningQuiz(', 'DnaHelixView(',
+              'ANATOMY MODEL STATUS', 'Spectrum 1.5.5', 'sans-serif-condensed'
+          ]
+          for item in required:
+              if item not in source:
+                  raise SystemExit(f'Missing expected 1.5.5 source feature: {item}')
+          if 'private fun Anatomy3DView' in source:
+              raise SystemExit('The previous schematic anatomy renderer should remain removed')
+          if 'private val englishNames' not in source:
+              raise SystemExit('Periodic-table English localization data is missing')
+          if 'android.permission.INTERNET' in Path('app/src/main/AndroidManifest.xml').read_text():
+              raise SystemExit('Unexpected INTERNET permission in offline build')
+          print('Version, source features, offline manifest and anatomy placeholder removal verified')
+          PY
 
-      - name: Check Android XML resources
+      - name: Validate Android XML resources
         shell: bash
         run: |
-          python3 - <<'PYCODE'
+          python3 - <<'PY'
           import xml.etree.ElementTree as ET
           from pathlib import Path
-
-          for p in Path('app/src/main').rglob('*.xml'):
-              ET.parse(p)
-              print(f'XML OK: {p}')
-          PYCODE
+          files = list(Path('app/src/main').rglob('*.xml'))
+          for path in files:
+              ET.parse(path)
+              print(f'XML OK: {path}')
+          print(f'Validated {len(files)} XML resources')
+          PY
 
       - name: Check embedded JavaScript syntax
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PYCODE'
+          python3 - <<'PY'
           import re, subprocess, tempfile
           from pathlib import Path
-
           source = Path('app/src/main/java/com/elyionn/spektrum/MainActivity.kt').read_text(encoding='utf-8')
           scripts = re.findall(r'<script>([\s\S]*?)</script>', source)
-
-          if len(scripts) != 4:
-              raise SystemExit(f'Expected 4 scripts, found {len(scripts)}')
-
+          if len(scripts) != 3:
+              raise SystemExit(f'Expected 3 embedded scripts, found {len(scripts)}')
           substitutions = {
-              '$shellJson': '2,8,6',
-              '$atomicNumber': '8',
-              '$symbol': 'O',
+              '$shellJson': '2,8,6', '$atomicNumber': '8', '$symbol': 'O',
               '$isotopeLiteral': '16'
           }
-
-          with tempfile.TemporaryDirectory() as d:
-              for i, script in enumerate(scripts):
+          with tempfile.TemporaryDirectory() as directory:
+              for index, script in enumerate(scripts):
                   for old, new in substitutions.items():
                       script = script.replace(old, new)
-
                   script = re.sub(r'\$\{[^}]*\}', 'localizedText', script)
-                  path = Path(d) / f'model-{i}.js'
+                  path = Path(directory) / f'model-{index}.js'
                   path.write_text(script, encoding='utf-8')
                   subprocess.run(['node', '--check', str(path)], check=True)
-
-          print('JavaScript checks passed')
-          PYCODE
+          print('All embedded JavaScript blocks passed node --check')
+          PY
 
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
@@ -129,7 +125,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-v1.5.4-patch-debug-APK
+          name: Spectrum-v1.5.5-debug-APK
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
