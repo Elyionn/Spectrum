@@ -1,2 +1,2 @@
 # Spectrum
-Spectrum
+Spectrum science app for education
