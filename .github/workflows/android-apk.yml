@@ -99,11 +99,16 @@ jobs:
           ids = re.findall(r'AtlasTopic\("([a-z0-9_-]+)"', atlas)
           if len(ids) < 18 or len(ids) != len(set(ids)):
               raise SystemExit(f'Atlas topic IDs invalid: {len(ids)} entries')
-          required = ['ScienceAtlasPage', 'AtlasTopicPage', 'ScienceLibraryPage', 'completed_topics', 'DAILY SCIENCE']
+          required = [
+              'ScienceAtlasPage', 'AtlasTopicPage', 'ScienceLibraryPage',
+              'completed_topics', 'DAILY SCIENCE', 'SpectrumHomePage',
+              'SpectrumExplorePage', 'SpectrumLabHubPage',
+              'categoryReturnPage', 'FilterChip'
+          ]
           for marker in required:
               if marker not in atlas + main:
                   raise SystemExit(f'Missing integrated feature marker: {marker}')
-          print(f'Validated {len(rows)} elements and {len(ids)} unique atlas topics.')
+          print(f'Validated {len(rows)} elements, {len(ids)} unique atlas topics and redesigned UI route markers.')
           PY
 
       - name: Generate Gradle wrapper if project does not include one
@@ -124,7 +129,8 @@ jobs:
           import xml.etree.ElementTree as ET
           from pathlib import Path
           files=list(Path('app/src/main').rglob('*.xml'))
-          for f in files: ET.parse(f)
+          for f in files:
+              ET.parse(f)
           print(f'Validated {len(files)} XML resources.')
           PY
 
@@ -143,7 +149,8 @@ jobs:
           replacements={'$shellJson':'2,8,6','$atomicNumber':'8','$symbol':'O','$isotopeLiteral':'16'}
           with tempfile.TemporaryDirectory() as directory:
               for index, script in enumerate(scripts):
-                  for old,new in replacements.items(): script=script.replace(old,new)
+                  for old,new in replacements.items():
+                      script=script.replace(old,new)
                   script=re.sub(r'\$\{[^}]*\}', 'localizedText', script)
                   path=Path(directory)/f'visual-{index}.js'
                   path.write_text(script,encoding='utf-8')
