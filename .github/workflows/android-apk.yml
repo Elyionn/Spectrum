@@ -1,4 +1,4 @@
-name: Spectrum 1.6.0 · Android CI
+name: Spectrum 1.6.1 Android CI
 
 on:
   workflow_dispatch:
@@ -10,48 +10,14 @@ permissions:
 
 jobs:
   build:
-    name: Validate and build Spectrum 1.6.0
+    name: Validate and build Spectrum 1.6.1
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Resolve Android project root (folder or ZIP)
-        id: project
-        shell: bash
-        run: |
-          set -euo pipefail
-          ROOT="$GITHUB_WORKSPACE"
-          if [[ -f "$ROOT/settings.gradle.kts" && -f "$ROOT/app/build.gradle.kts" ]]; then
-            echo "project_dir=$ROOT" >> "$GITHUB_OUTPUT"
-            echo "Android project found at repository root."
-            exit 0
-          fi
-          ARCHIVE="$(find "$ROOT" -maxdepth 2 -type f -iname '*.zip' -print -quit)"
-          if [[ -z "$ARCHIVE" ]]; then
-            echo "ERROR: Neither an Android project root nor a ZIP archive was found."
-            find "$ROOT" -maxdepth 3 -type f | sort | head -200
-            exit 1
-          fi
-          unzip -tq "$ARCHIVE"
-          EXTRACT="$RUNNER_TEMP/spectrum-project"
-          mkdir -p "$EXTRACT"
-          unzip -q "$ARCHIVE" -d "$EXTRACT"
-          SETTINGS="$(find "$EXTRACT" -type f -name settings.gradle.kts -print -quit)"
-          if [[ -z "$SETTINGS" ]]; then
-            echo "ERROR: ZIP has no settings.gradle.kts."
-            exit 1
-          fi
-          PROJECT_DIR="$(dirname "$SETTINGS")"
-          if [[ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]]; then
-            echo "ERROR: Found settings.gradle.kts but app/build.gradle.kts is missing from $PROJECT_DIR."
-            exit 1
-          fi
-          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "Resolved project root: $PROJECT_DIR"
-
-      - name: Set up JDK 17
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -60,58 +26,239 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install Android SDK 35
+      - name: Accept Android SDK licenses
         shell: bash
         run: |
           set -euo pipefail
-          set +o pipefail
-          yes | sdkmanager --licenses >/dev/null
-          set -o pipefail
-          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          python3 - <<'PY'
+          import subprocess
+          result = subprocess.run(
+              ["sdkmanager", "--licenses"],
+              input="y\n" * 200,
+              text=True,
+              check=False,
+          )
+          if result.returncode != 0:
+              raise SystemExit(result.returncode)
+          PY
+
+      - name: Install Android SDK packages
+        run: sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Validate project metadata and datasets
+      - name: Resolve and safely extract the exact 1.6.1 project
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import stat
+          import zipfile
+          from pathlib import Path, PurePosixPath
+
+          repo = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-161-extracted"
+          out.mkdir(parents=True, exist_ok=True)
+
+          def is_project(folder: Path) -> bool:
+              build = folder / "app" / "build.gradle.kts"
+              return (
+                  (folder / "settings.gradle.kts").is_file()
+                  and build.is_file()
+                  and 'versionName = "1.6.1"' in build.read_text(encoding="utf-8")
+              )
+
+          if is_project(repo):
+              project = repo
+              print("Using Android project at repository root.")
+          else:
+              candidates = []
+              rejected = []
+
+              for archive in sorted(repo.rglob("*.zip")):
+                  if ".git" in archive.parts or "build" in archive.parts:
+                      continue
+                  try:
+                      with zipfile.ZipFile(archive) as zf:
+                          bad = zf.testzip()
+                          if bad:
+                              rejected.append(f"{archive}: corrupt member {bad}")
+                              continue
+
+                          names = zf.namelist()
+                          settings = [
+                              n for n in names
+                              if PurePosixPath(n).name == "settings.gradle.kts"
+                          ]
+                          matched = []
+
+                          for setting in settings:
+                              prefix = str(PurePosixPath(setting).parent)
+                              build_name = (
+                                  (prefix + "/") if prefix != "." else ""
+                              ) + "app/build.gradle.kts"
+
+                              if build_name in names:
+                                  text = zf.read(build_name).decode(
+                                      "utf-8", errors="replace"
+                                  )
+                                  if 'versionName = "1.6.1"' in text:
+                                      matched.append(setting)
+
+                          if len(matched) == 1:
+                              candidates.append((archive, matched[0]))
+                          elif len(matched) > 1:
+                              rejected.append(
+                                  f"{archive}: multiple 1.6.1 project roots"
+                              )
+
+                  except (OSError, zipfile.BadZipFile) as exc:
+                      rejected.append(f"{archive}: {exc}")
+
+              if len(candidates) != 1:
+                  print("ZIP candidates matching versionName 1.6.1:", len(candidates))
+                  for archive, _ in candidates:
+                      print("MATCH:", archive)
+                  for item in rejected:
+                      print("REJECTED:", item)
+                  if not candidates:
+                      print(
+                          "ZIP files found:",
+                          *[str(p) for p in repo.rglob("*.zip")],
+                          sep="\n",
+                      )
+                  raise SystemExit(
+                      "Expected exactly one valid Spectrum 1.6.1 project ZIP. "
+                      "Remove old/duplicate project ZIPs or commit the project "
+                      "files at repository root."
+                  )
+
+              archive, settings_entry = candidates[0]
+              print("Selected archive:", archive.name)
+              print("Archive SHA256:", hashlib.sha256(archive.read_bytes()).hexdigest())
+
+              with zipfile.ZipFile(archive) as zf:
+                  for info in zf.infolist():
+                      name = info.filename.replace("\\", "/")
+                      path = PurePosixPath(name)
+                      mode = info.external_attr >> 16
+
+                      if (
+                          path.is_absolute()
+                          or ".." in path.parts
+                          or stat.S_ISLNK(mode)
+                      ):
+                          raise SystemExit(
+                              f"Unsafe ZIP entry rejected: {info.filename}"
+                          )
+
+                  zf.extractall(out)
+
+              project = (
+                  out / str(PurePosixPath(settings_entry).parent)
+              ).resolve()
+
+              if not project.is_relative_to(out.resolve()):
+                  raise SystemExit(
+                      "Resolved project root escapes extraction directory."
+                  )
+
+              if not is_project(project):
+                  raise SystemExit(
+                      "Extracted project is incomplete or has the wrong version."
+                  )
+
+          print("Resolved project root:", project)
+          with open(
+              os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8"
+          ) as output:
+              output.write(f"project_dir={project}\n")
+          PY
+
+      - name: Validate project metadata, elements and Atlas data
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 13' app/build.gradle.kts
-          grep -Fq 'versionName = "1.6.0"' app/build.gradle.kts
+          grep -Fq 'versionCode = 14' app/build.gradle.kts
+          grep -Fq 'versionName = "1.6.1"' app/build.gradle.kts
           grep -Fq 'com.android.application") version "8.7.3"' build.gradle.kts
           grep -Fq 'org.jetbrains.kotlin.android") version "2.0.21"' build.gradle.kts
+
+          test -s app/src/main/AndroidManifest.xml
           test -s app/src/main/java/com/elyionn/spektrum/MainActivity.kt
           test -s app/src/main/java/com/elyionn/spektrum/ScienceAtlas.kt
-          test -s app/src/main/AndroidManifest.xml
+
           python3 - <<'PY'
           import re
           from pathlib import Path
-          main = Path('app/src/main/java/com/elyionn/spektrum/MainActivity.kt').read_text(encoding='utf-8')
-          atlas = Path('app/src/main/java/com/elyionn/spektrum/ScienceAtlas.kt').read_text(encoding='utf-8')
-          block = main.split('val elementRows = listOf(', 1)[1].split(').map { it.split', 1)[0]
+
+          main = Path(
+              "app/src/main/java/com/elyionn/spektrum/MainActivity.kt"
+          ).read_text(encoding="utf-8")
+
+          atlas = Path(
+              "app/src/main/java/com/elyionn/spektrum/ScienceAtlas.kt"
+          ).read_text(encoding="utf-8")
+
+          block = main.split(
+              "val elementRows = listOf(", 1
+          )[1].split(").map { it.split", 1)[0]
+
           rows = re.findall(r'"([A-Z][a-z]?)\|[^|]+\|(\d+)\|', block)
-          numbers = [int(z) for _, z in rows]
-          if len(rows) != 118 or sorted(numbers) != list(range(1,119)):
-              raise SystemExit(f'Periodic table invalid: {len(rows)} rows, atomic numbers={len(set(numbers))}')
+          numbers = [int(number) for _, number in rows]
+
+          if len(rows) != 118 or sorted(numbers) != list(range(1, 119)):
+              raise SystemExit(
+                  f"Invalid periodic table: {len(rows)} entries; "
+                  "atomic numbers are not exactly 1..118"
+              )
+
           ids = re.findall(r'AtlasTopic\("([a-z0-9_-]+)"', atlas)
-          if len(ids) < 18 or len(ids) != len(set(ids)):
-              raise SystemExit(f'Atlas topic IDs invalid: {len(ids)} entries')
-          required = [
-              'ScienceAtlasPage', 'AtlasTopicPage', 'ScienceLibraryPage',
-              'completed_topics', 'DAILY SCIENCE', 'SpectrumHomePage',
-              'SpectrumExplorePage', 'SpectrumLabHubPage',
-              'categoryReturnPage', 'FilterChip'
-          ]
-          for marker in required:
-              if marker not in atlas + main:
-                  raise SystemExit(f'Missing integrated feature marker: {marker}')
-          print(f'Validated {len(rows)} elements, {len(ids)} unique atlas topics and redesigned UI route markers.')
+
+          if len(ids) != len(set(ids)) or len(ids) < 18:
+              raise SystemExit(
+                  f"Invalid Science Atlas IDs: {len(ids)} topics"
+              )
+
+          if "animateFloat" in main or "transition.animateFloat" in main:
+              raise SystemExit(
+                  "Legacy animateFloat call remains in MainActivity.kt"
+              )
+
+          if (
+              "Spectrum 1.6.0" in main
+              or "Elyionn · Spectrum 1.6.0" in main
+          ):
+              raise SystemExit(
+                  "Stale 1.6.0 version label remains in the application UI"
+              )
+
+          for marker in [
+              "LazyVerticalGrid(",
+              "periodicTableCells",
+              "SpectrumHomePage",
+              "SpectrumExplorePage",
+              "SpectrumLabHubPage",
+          ]:
+              if marker not in main:
+                  raise SystemExit(
+                      f"Missing expected implementation marker: {marker}"
+                  )
+
+          print(
+              f"Validated {len(rows)} periodic-table elements "
+              f"and {len(ids)} Atlas topics."
+          )
           PY
 
-      - name: Generate Gradle wrapper if project does not include one
+      - name: Ensure Gradle wrapper exists
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
@@ -122,16 +269,18 @@ jobs:
           chmod +x gradlew
           ./gradlew --version
 
-      - name: Validate Android XML
+      - name: Validate Android XML resources
         working-directory: ${{ steps.project.outputs.project_dir }}
         run: |
           python3 - <<'PY'
           import xml.etree.ElementTree as ET
           from pathlib import Path
-          files=list(Path('app/src/main').rglob('*.xml'))
-          for f in files:
-              ET.parse(f)
-          print(f'Validated {len(files)} XML resources.')
+
+          files = list(Path("app/src/main").rglob("*.xml"))
+          for file in files:
+              ET.parse(file)
+
+          print(f"Parsed {len(files)} Android XML files.")
           PY
 
       - name: Check embedded WebView JavaScript syntax
@@ -140,22 +289,46 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import re, subprocess, tempfile
+          import re
+          import subprocess
+          import tempfile
           from pathlib import Path
-          source=Path('app/src/main/java/com/elyionn/spektrum/MainActivity.kt').read_text(encoding='utf-8')
-          scripts=re.findall(r'<script>([\s\S]*?)</script>', source)
+
+          source = Path(
+              "app/src/main/java/com/elyionn/spektrum/MainActivity.kt"
+          ).read_text(encoding="utf-8")
+
+          scripts = re.findall(r"<script>([\s\S]*?)</script>", source)
+
           if len(scripts) != 3:
-              raise SystemExit(f'Expected 3 embedded scripts, found {len(scripts)}')
-          replacements={'$shellJson':'2,8,6','$atomicNumber':'8','$symbol':'O','$isotopeLiteral':'16'}
+              raise SystemExit(
+                  f"Expected 3 embedded scripts; found {len(scripts)}"
+              )
+
+          replacements = {
+              "$shellJson": "2,8,6",
+              "$atomicNumber": "8",
+              "$symbol": "O",
+              "$isotopeLiteral": "16",
+          }
+
           with tempfile.TemporaryDirectory() as directory:
               for index, script in enumerate(scripts):
-                  for old,new in replacements.items():
-                      script=script.replace(old,new)
-                  script=re.sub(r'\$\{[^}]*\}', 'localizedText', script)
-                  path=Path(directory)/f'visual-{index}.js'
-                  path.write_text(script,encoding='utf-8')
-                  subprocess.run(['node','--check',str(path)],check=True)
-          print('All embedded JavaScript blocks passed syntax validation.')
+                  for old, new in replacements.items():
+                      script = script.replace(old, new)
+
+                  script = re.sub(
+                      r"\$\{[^}]*\}", "localizedText", script
+                  )
+
+                  path = Path(directory) / f"spectrum-model-{index}.js"
+                  path.write_text(script, encoding="utf-8")
+                  subprocess.run(
+                      ["node", "--check", str(path)],
+                      check=True,
+                  )
+
+          print("All embedded WebView JavaScript blocks passed node --check.")
           PY
 
       - name: Build debug APK
@@ -163,37 +336,57 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew --no-daemon --stacktrace --warning-mode all :app:assembleDebug 2>&1 | tee "$RUNNER_TEMP/spectrum-debug-build.log"
+          ./gradlew --no-daemon --stacktrace --warning-mode all \
+            :app:assembleDebug 2>&1 \
+            | tee "$RUNNER_TEMP/spectrum-1.6.1-debug.log"
 
       - name: Build release APK
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew --no-daemon --stacktrace --warning-mode all :app:assembleRelease 2>&1 | tee "$RUNNER_TEMP/spectrum-release-build.log"
+          ./gradlew --no-daemon --stacktrace --warning-mode all \
+            :app:assembleRelease 2>&1 \
+            | tee "$RUNNER_TEMP/spectrum-1.6.1-release.log"
 
-      - name: Verify APK outputs
+      - name: Verify APK files and package metadata
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          DEBUG_APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
-          RELEASE_APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
+
+          DEBUG_APK="$(find app/build/outputs/apk/debug \
+            -maxdepth 1 -type f -name '*.apk' -print -quit)"
+
+          RELEASE_APK="$(find app/build/outputs/apk/release \
+            -maxdepth 1 -type f -name '*.apk' -print -quit)"
+
           test -n "$DEBUG_APK" && test -s "$DEBUG_APK"
           test -n "$RELEASE_APK" && test -s "$RELEASE_APK"
-          sha256sum "$DEBUG_APK" "$RELEASE_APK"
+
           unzip -tq "$DEBUG_APK"
           unzip -tq "$RELEASE_APK"
 
-      - name: Upload APKs and build logs
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          test -x "$AAPT"
+
+          "$AAPT" dump badging "$DEBUG_APK" \
+            | grep -F "package: name='com.elyionn.spectrum.debug'"
+
+          "$AAPT" dump badging "$RELEASE_APK" \
+            | grep -F "package: name='com.elyionn.spectrum'"
+
+          sha256sum "$DEBUG_APK" "$RELEASE_APK"
+
+      - name: Upload APKs and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-1.6.0-build-output
+          name: Spectrum-1.6.1-APKs-and-diagnostics
           path: |
             ${{ steps.project.outputs.project_dir }}/app/build/outputs/apk/**/*.apk
-            ${{ runner.temp }}/spectrum-debug-build.log
-            ${{ runner.temp }}/spectrum-release-build.log
+            ${{ runner.temp }}/spectrum-1.6.1-debug.log
+            ${{ runner.temp }}/spectrum-1.6.1-release.log
           if-no-files-found: warn
           retention-days: 21
           
