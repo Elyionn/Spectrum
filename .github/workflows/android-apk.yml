@@ -32,9 +32,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+        with:
+          # Explicitly install supported packages; the deprecated "tools" package
+          # causes sdkmanager to fail on current Android SDK repositories.
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v3
