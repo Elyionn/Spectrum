@@ -1,4 +1,4 @@
-name: Spectrum 1.6.6 Android Build
+name: Spectrum 1.6.6 Android Build (SDK license fix)
 
 on:
   workflow_dispatch:
@@ -41,8 +41,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Accept licenses without a `yes | ...` pipeline.
+          # sdkmanager may close stdin early; with pipefail that makes `yes`
+          # exit via SIGPIPE and incorrectly fails the whole workflow.
+          LICENSE_INPUT="$RUNNER_TEMP/android-sdk-licenses.txt"
+          for _ in {1..100}; do printf 'y\n'; done > "$LICENSE_INPUT"
+          sdkmanager --licenses < "$LICENSE_INPUT"
           sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-          yes | sdkmanager --licenses >/dev/null
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v3
