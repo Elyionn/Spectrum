@@ -1,11 +1,11 @@
-name: Spectrum 1.7.0 Android Build
+name: Spectrum 1.7.1 Android Build
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
     paths:
-      - 'Spectrum_1.7.0_Android_Project.zip'
+      - 'Spectrum_1.7.1_Android_Project.zip'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Validate, test and build Spectrum 1.7.0
+    name: Validate, test and build Spectrum 1.7.1
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -49,7 +49,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Safely extract exact 1.7.0 source archive
+      - name: Safely extract exact 1.7.1 source archive
         id: project
         shell: bash
         run: |
@@ -57,10 +57,10 @@ jobs:
           python3 - <<'PY'
           import os, stat, zipfile
           from pathlib import Path, PurePosixPath
-          archive = Path("Spectrum_1.7.0_Android_Project.zip")
+          archive = Path("Spectrum_1.7.1_Android_Project.zip")
           if not archive.is_file():
               raise SystemExit(f"Missing required archive: {archive}")
-          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-170"
+          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-171"
           out.mkdir(parents=True, exist_ok=True)
           with zipfile.ZipFile(archive) as zf:
               bad = zf.testzip()
@@ -72,10 +72,10 @@ jobs:
               for item in settings:
                   prefix = str(PurePosixPath(item).parent)
                   build = (prefix + "/" if prefix != "." else "") + "app/build.gradle.kts"
-                  if build in names and 'versionName = "1.7.0"' in zf.read(build).decode("utf-8", "replace"):
+                  if build in names and 'versionName = "1.7.1"' in zf.read(build).decode("utf-8", "replace"):
                       matches.append(item)
               if len(matches) != 1:
-                  raise SystemExit(f"Expected exactly one 1.7.0 Android project root; found {len(matches)}")
+                  raise SystemExit(f"Expected exactly one 1.7.1 Android project root; found {len(matches)}")
               for info in zf.infolist():
                   name = info.filename.replace("\\", "/")
                   path = PurePosixPath(name)
@@ -98,8 +98,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 23' app/build.gradle.kts
-          grep -Fq 'versionName = "1.7.0"' app/build.gradle.kts
+          grep -Fq 'versionCode = 24' app/build.gradle.kts
+          grep -Fq 'versionName = "1.7.1"' app/build.gradle.kts
           grep -Fq 'applicationId = "com.elyionn.spectrum"' app/build.gradle.kts
           grep -Fq 'namespace = "com.elyionn.spektrum"' app/build.gradle.kts
           test -s app/src/test/java/com/elyionn/spektrum/PeriodicTableDataTest.kt
@@ -150,6 +150,12 @@ jobs:
           main = (base / "java/com/elyionn/spektrum/MainActivity.kt").read_text(encoding="utf-8")
           if "rememberInfiniteTransition" in main or "animateFloat(" in main:
               raise SystemExit("Unexpected permanent Compose animation in MainActivity")
+          if "settings.blockNetworkLoads = false" not in main or "appassets.androidplatform.net" not in main or "reportReady()" not in main:
+              raise SystemExit("3D WebView local-origin loading and diagnostic bridge are missing")
+          if "LazyColumn(Modifier.weight(1f)" not in main:
+              raise SystemExit("Search results must use lazy list rendering")
+          if 'versionName = "1.7.1"' not in (Path("app/build.gradle.kts").read_text(encoding="utf-8")):
+              raise SystemExit("App version metadata is not 1.7.1")
           if "let rot=0,drag=false,px=0,auto=false;" not in main:
               raise SystemExit("Embedded atom scene must default to on-demand rendering")
           print(f"Validated {len(xmls)} XML files, {len(data)} unique lessons, 118 elements and idle-rendering guards")
@@ -227,7 +233,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-1.7.0-build-results
+          name: Spectrum-1.7.1-build-results
           path: |
             ${{ steps.project.outputs.dir }}/app/build/outputs/apk/**/*.apk
             ${{ steps.project.outputs.dir }}/app/build/test-results/**
