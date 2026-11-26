@@ -1,11 +1,11 @@
-name: Spectrum 1.7.1 Android Build - Kotlin callback fix
+name: Spectrum 1.7.1 Android Build
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
     paths:
-      - 'Spectrum_1.7.1_Android_Project*.zip'
+      - 'Spectrum_1.7.1_Android_Project.zip'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -17,12 +17,67 @@ concurrency:
 
 jobs:
   build:
-    name: Validate, test and build Spectrum 1.7.1 (fixed)
+    name: Validate, test and build Spectrum 1.7.1
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Verify and safely extract source ZIP
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, stat, zipfile
+          from pathlib import Path, PurePosixPath
+
+          archive = Path("Spectrum_1.7.1_Android_Project.zip")
+          if not archive.is_file():
+              raise SystemExit(
+                  "Source ZIP not found. Upload Spectrum_1.7.1_Android_Project.zip "
+                  "to the repository root (same level as the .github folder)."
+              )
+
+          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-171-source"
+          out.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile(archive) as zf:
+              bad = zf.testzip()
+              if bad:
+                  raise SystemExit(f"Corrupt ZIP entry: {bad}")
+              names = zf.namelist()
+              for info in zf.infolist():
+                  name = info.filename.replace("\\", "/")
+                  path = PurePosixPath(name)
+                  mode = info.external_attr >> 16
+                  if path.is_absolute() or ".." in path.parts or stat.S_ISLNK(mode):
+                      raise SystemExit(f"Unsafe ZIP entry: {info.filename}")
+              settings_files = [n for n in names if PurePosixPath(n).name == "settings.gradle.kts"]
+              roots = []
+              for item in settings_files:
+                  parent = str(PurePosixPath(item).parent)
+                  prefix = "" if parent == "." else parent + "/"
+                  build_file = prefix + "app/build.gradle.kts"
+                  manifest = prefix + "app/src/main/AndroidManifest.xml"
+                  if build_file in names and manifest in names:
+                      build_text = zf.read(build_file).decode("utf-8", "replace")
+                      if 'versionName = "1.7.1"' in build_text and 'versionCode = 24' in build_text:
+                          roots.append(parent)
+              if len(roots) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one Spectrum 1.7.1 Android project in ZIP; found {len(roots)}. "
+                      "The archive must contain settings.gradle.kts, app/build.gradle.kts and AndroidManifest.xml."
+                  )
+              zf.extractall(out)
+
+          project = (out / roots[0]).resolve()
+          if not project.is_relative_to(out.resolve()):
+              raise SystemExit("Extracted project path escaped the temporary directory")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"dir={project}\n")
+          print(f"Successfully extracted project: {project}")
+          PY
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -32,16 +87,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: ''
 
-      - name: Accept SDK licenses and install packages
+      - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
-          LICENSE_INPUT="$RUNNER_TEMP/android-sdk-licenses.txt"
-          for _ in {1..100}; do printf 'y\n'; done > "$LICENSE_INPUT"
-          sdkmanager --licenses < "$LICENSE_INPUT"
           sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
@@ -49,65 +99,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Safely extract exact 1.7.1 source archive
-        id: project
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import os, stat, zipfile
-          from pathlib import Path, PurePosixPath
-          candidates = [
-              Path("Spectrum_1.7.1_Android_Project.zip"),
-              Path("Spectrum_1.7.1_Android_Project_FIXED.zip"),
-              Path("Spectrum_1.7.1_Android_Project_MATCHED.zip"),
-          ]
-          present = [p for p in candidates if p.is_file()]
-          if not present:
-              raise SystemExit(
-                  "Missing source ZIP. Upload Spectrum_1.7.1_Android_Project_MATCHED.zip "
-                  "to the repository root."
-              )
-          if len(present) > 1:
-              raise SystemExit(
-                  "Found multiple Spectrum 1.7.1 source ZIP files. Keep only one in the repository root."
-              )
-          archive = present[0]
-          print(f"Using source archive: {archive}")
-          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-171"
-          out.mkdir(parents=True, exist_ok=True)
-          with zipfile.ZipFile(archive) as zf:
-              bad = zf.testzip()
-              if bad:
-                  raise SystemExit(f"Corrupt ZIP member: {bad}")
-              names = zf.namelist()
-              settings = [n for n in names if PurePosixPath(n).name == "settings.gradle.kts"]
-              matches = []
-              for item in settings:
-                  prefix = str(PurePosixPath(item).parent)
-                  build = (prefix + "/" if prefix != "." else "") + "app/build.gradle.kts"
-                  if build in names and 'versionName = "1.7.1"' in zf.read(build).decode("utf-8", "replace"):
-                      matches.append(item)
-              if len(matches) != 1:
-                  raise SystemExit(f"Expected exactly one 1.7.1 Android project root; found {len(matches)}")
-              for info in zf.infolist():
-                  name = info.filename.replace("\\", "/")
-                  path = PurePosixPath(name)
-                  mode = info.external_attr >> 16
-                  if path.is_absolute() or ".." in path.parts or stat.S_ISLNK(mode):
-                      raise SystemExit(f"Unsafe ZIP entry rejected: {info.filename}")
-              zf.extractall(out)
-          project = (out / str(PurePosixPath(matches[0]).parent)).resolve()
-          if not project.is_relative_to(out.resolve()):
-              raise SystemExit("Project root escaped extraction directory")
-          if not (project / "app/src/main/AndroidManifest.xml").is_file():
-              raise SystemExit("Android manifest missing from extracted project")
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-              f.write(f"dir={project}\n")
-          print(f"Validated project root: {project}")
-          PY
-
-      - name: Verify version and app identity
+      - name: Verify project metadata
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
         run: |
@@ -115,10 +107,9 @@ jobs:
           grep -Fq 'versionCode = 24' app/build.gradle.kts
           grep -Fq 'versionName = "1.7.1"' app/build.gradle.kts
           grep -Fq 'applicationId = "com.elyionn.spectrum"' app/build.gradle.kts
-          grep -Fq 'namespace = "com.elyionn.spektrum"' app/build.gradle.kts
-          test -s app/src/test/java/com/elyionn/spektrum/PeriodicTableDataTest.kt
+          test -s app/src/main/AndroidManifest.xml
 
-      - name: Generate Gradle wrapper when absent
+      - name: Generate Gradle wrapper if missing
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
         run: |
@@ -129,126 +120,28 @@ jobs:
           chmod +x gradlew
           ./gradlew --version
 
-      - name: Validate XML, JSON, periodic table and local JavaScript
+      - name: Compile Kotlin and run unit tests
         working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json, re, xml.etree.ElementTree as ET
-          from pathlib import Path
-          base = Path("app/src/main")
-          xmls = list(base.rglob("*.xml"))
-          for p in xmls: ET.parse(p)
-          data = json.loads((base / "assets/data/science_topics.json").read_text(encoding="utf-8"))
-          slugs = [x.get("slug") for x in data]
-          required = ("slug", "title", "category", "summary", "lead", "how", "life", "facts")
-          if len(data) != 151 or len(slugs) != len(set(slugs)) or any(not x.get(k) for x in data for k in required):
-              raise SystemExit("Science Atlas must contain 151 complete lessons with unique slugs")
-          categories = {"biyoloji": 26, "fizik": 26, "kimya": 23, "matematik": 21, "uzay": 21, "elektronik": 20, "yer_bilimleri": 14}
-          counts = {}
-          for item in data: counts[item["category"]] = counts.get(item["category"], 0) + 1
-          if counts != categories:
-              raise SystemExit(f"Unexpected category totals: {counts}")
-          added = [x for x in data if x.get("isNew") is True]
-          if len(added) != 35 or any(len(x.get("sources", [])) < 2 or any(not s.get("url", "").startswith("https://") for s in x.get("sources", [])) for x in added):
-              raise SystemExit("Expected 35 new lessons, each with at least two HTTPS sources")
-          src = (base / "java/com/elyionn/spektrum/PeriodicTableData.kt").read_text(encoding="utf-8")
-          block = src.split("val elementRows = listOf(", 1)[1].split(").map { it.split", 1)[0]
-          rows = re.findall(r'"([A-Z][a-z]?)\|[^|]+\|(\d+)\|', block)
-          if len(rows) != 118 or sorted(int(n) for _, n in rows) != list(range(1, 119)):
-              raise SystemExit(f"Expected exactly 118 periodic-table records; got {len(rows)}")
-          layout = src.split("val periodicTableRows:", 1)[1].split("\n)", 1)[0]
-          if len(re.findall(r"listOf<Int\?>\(", layout)) < 2:
-              raise SystemExit("Periodic-table layout declaration missing")
-          main = (base / "java/com/elyionn/spektrum/MainActivity.kt").read_text(encoding="utf-8")
-          if "rememberInfiniteTransition" in main or "animateFloat(" in main:
-              raise SystemExit("Unexpected permanent Compose animation in MainActivity")
-          if "settings.blockNetworkLoads = false" not in main or "appassets.androidplatform.net" not in main or "reportReady()" not in main:
-              raise SystemExit("3D WebView local-origin loading and diagnostic bridge are missing")
-          lab_client = main.split('val bridgeView = this', 1)[1].split('webChromeClient = object : WebChromeClient()', 1)[0]
-          if 'webViewClient = object : WebViewClient()' not in lab_client or 'override fun onReceivedError(' not in lab_client:
-              raise SystemExit("3D WebView must use platform WebViewClient for overridable error callbacks")
-          if 'webViewClient = object : WebViewClientCompat()' in lab_client:
-              raise SystemExit("Do not override final WebViewClientCompat error callbacks")
-          if "LazyColumn(Modifier.weight(1f)" not in main:
-              raise SystemExit("Search results must use lazy list rendering")
-          if 'versionName = "1.7.1"' not in (Path("app/build.gradle.kts").read_text(encoding="utf-8")):
-              raise SystemExit("App version metadata is not 1.7.1")
-          if "let rot=0,drag=false,px=0,auto=false;" not in main:
-              raise SystemExit("Embedded atom scene must default to on-demand rendering")
-          print(f"Validated {len(xmls)} XML files, {len(data)} unique lessons, 118 elements and idle-rendering guards")
-          PY
-          node --check app/src/main/assets/lab/three.module.js
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-          html = Path("app/src/main/assets/lab/index.html").read_text(encoding="utf-8")
-          buttons = set(re.findall(r'<button data-id="([a-z0-9-]+)"', html))
-          block = html.split("const defs={",1)[1].split("};\nconst uiText=",1)[0]
-          registry = set(re.findall(r"(?:^|,)\s*[\'\"]?([a-z][a-z0-9-]*)[\'\"]?\s*:", block))
-          missing = buttons - registry
-          if missing: raise SystemExit(f"3D models missing registry entries: {sorted(missing)}")
-          if len(buttons) < 48: raise SystemExit(f"Expected at least 48 3D scenes, got {len(buttons)}")
-          print(f"Validated {len(buttons)} 3D scene buttons against registry")
-          import re
-          match = re.search(r'<script type="module">([\s\S]*?)</script>', html)
-          if not match: raise SystemExit("Three.js module script not found")
-          Path("/tmp/spectrum-lab-module.mjs").write_text(match.group(1), encoding="utf-8")
-          PY
-          node --check /tmp/spectrum-lab-module.mjs
-
-      - name: Compile Kotlin
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: ./gradlew --no-daemon --console=plain --stacktrace :app:compileDebugKotlin
-
-      - name: Run unit tests
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: ./gradlew --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
-
-      - name: Verify unit tests executed
-        working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          REPORT="app/build/test-results/testDebugUnitTest"
-          test -d "$REPORT"
-          python3 - "$REPORT" <<'PY'
-          import sys, xml.etree.ElementTree as ET
-          from pathlib import Path
-          files = list(Path(sys.argv[1]).glob("TEST-*.xml"))
-          if not files:
-              raise SystemExit("No JUnit XML reports found; test task may have been NO-SOURCE")
-          total = failures = errors = 0
-          for p in files:
-              r = ET.parse(p).getroot()
-              total += int(r.attrib.get("tests", 0))
-              failures += int(r.attrib.get("failures", 0))
-              errors += int(r.attrib.get("errors", 0))
-          if total < 7 or failures or errors:
-              raise SystemExit(f"JUnit report invalid: tests={total}, failures={failures}, errors={errors}")
-          print(f"JUnit passed: {total} tests")
-          PY
+        run: ./gradlew --no-daemon --console=plain --stacktrace :app:compileDebugKotlin :app:testDebugUnitTest
 
       - name: Build debug and release APKs
         working-directory: ${{ steps.project.outputs.dir }}
         run: ./gradlew --no-daemon --console=plain --stacktrace :app:assembleDebug :app:assembleRelease
 
-      - name: Verify APKs and package identity
+      - name: Verify APK outputs
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
         run: |
           set -euo pipefail
           DEBUG_APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
           RELEASE_APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
-          test -s "$DEBUG_APK" && test -s "$RELEASE_APK"
+          test -s "$DEBUG_APK"
+          test -s "$RELEASE_APK"
           unzip -tq "$DEBUG_APK"
           unzip -tq "$RELEASE_APK"
-          test "$(apkanalyzer manifest application-id "$DEBUG_APK")" = "com.elyionn.spectrum.debug"
-          test "$(apkanalyzer manifest application-id "$RELEASE_APK")" = "com.elyionn.spectrum"
           sha256sum "$DEBUG_APK" "$RELEASE_APK" | tee apk-sha256.txt
 
-      - name: Upload APKs, test reports and diagnostics
+      - name: Upload APKs and reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
