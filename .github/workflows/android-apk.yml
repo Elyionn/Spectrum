@@ -1,11 +1,11 @@
-name: Spectrum 1.7.3 Android Build - Optimizasyon, Tema ve Stil
+name: Spectrum 1.7.4 Android Build - 3D Lab, Performans ve Tema
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
     paths:
-      - 'Spectrum_1.7.3_Android_Project.zip'
+      - 'Spectrum_1.7.4_Android_Project.zip'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -17,35 +17,33 @@ concurrency:
 
 jobs:
   build:
-    name: Validate, test and build Spectrum 1.7.3
+    name: Validate, test and build Spectrum 1.7.4
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '25'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: ''
 
       - name: Accept SDK licenses and install packages
         shell: bash
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager --install "platform-tools" "platforms;android-37" "build-tools;36.0.0"
 
-      - name: Set up Gradle 8.9
+      - name: Set up Gradle 9.7.0
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '9.7.0'
 
       - name: Validate and safely extract source ZIP
         id: project
@@ -56,10 +54,10 @@ jobs:
           import os, stat, zipfile
           from pathlib import Path, PurePosixPath
 
-          archive = Path("Spectrum_1.7.3_Android_Project.zip")
+          archive = Path("Spectrum_1.7.4_Android_Project.zip")
           if not archive.is_file() or archive.stat().st_size == 0:
-              raise SystemExit("ERROR: Spectrum_1.7.3_Android_Project.zip is missing or empty at repository root.")
-          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-173"
+              raise SystemExit("ERROR: Spectrum_1.7.4_Android_Project.zip is missing or empty at repository root.")
+          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-174"
           out.mkdir(parents=True, exist_ok=True)
           with zipfile.ZipFile(archive) as zf:
               bad = zf.testzip()
@@ -81,22 +79,18 @@ jobs:
                   prefix = "" if parent == "." else parent + "/"
                   if prefix + "app/build.gradle.kts" in names and prefix + "app/src/main/AndroidManifest.xml" in names:
                       roots.append(parent)
-              if len(roots) != 1:
-                  raise SystemExit(f"ERROR: Expected one Android Gradle project root, found {len(roots)}: {roots}")
-              root = roots[0]
-              build_path = (root + "/" if root != "." else "") + "app/build.gradle.kts"
-              build_text = zf.read(build_path).decode("utf-8")
-              if 'versionName = "1.7.3"' not in build_text or "versionCode = 26" not in build_text:
-                  raise SystemExit("ERROR: ZIP source does not declare versionName 1.7.3 and versionCode 26.")
+              if roots != ["."]:
+                  raise SystemExit(f"ERROR: Expected exactly one project rooted at ZIP root, found: {roots}")
+              build_text = zf.read("app/build.gradle.kts").decode("utf-8")
+              if 'versionName = "1.7.4"' not in build_text or "versionCode = 27" not in build_text:
+                  raise SystemExit("ERROR: ZIP source does not declare versionName 1.7.4 and versionCode 27.")
               zf.extractall(out)
-          project = (out / root).resolve()
-          if not project.is_relative_to(out.resolve()):
-              raise SystemExit("ERROR: Extracted project root escaped the temporary directory.")
-          for required in ("settings.gradle.kts", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml"):
+          project = out.resolve()
+          for required in ("settings.gradle.kts", "build.gradle.kts", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml", "app/src/main/assets/lab/index.html"):
               if not (project / required).is_file():
                   raise SystemExit(f"ERROR: Required project file missing after extraction: {required}")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-              f.write(f"dir={project}\n")
+              f.write(f"dir={project}\\n")
           print(f"ZIP validated and extracted successfully: {project}")
           PY
 
@@ -105,24 +99,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 26' app/build.gradle.kts
-          grep -Fq 'versionName = "1.7.3"' app/build.gradle.kts
+          grep -Fq 'versionCode = 27' app/build.gradle.kts
+          grep -Fq 'versionName = "1.7.4"' app/build.gradle.kts
           grep -Fq 'applicationId = "com.elyionn.spectrum"' app/build.gradle.kts
           grep -Fq 'namespace = "com.elyionn.spektrum"' app/build.gradle.kts
           test -s app/src/test/java/com/elyionn/spektrum/PeriodicTableDataTest.kt
+          grep -Fq 'onRenderProcessGone' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
+          grep -Fq 'webglcontextrestored' app/src/main/assets/lab/index.html
+          grep -Fq 'setPixelRatio(Math.min(window.devicePixelRatio||1,1.0))' app/src/main/assets/lab/index.html
 
-      - name: Generate Gradle wrapper when absent
+      - name: Generate Gradle wrapper
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! -f gradlew || ! -f gradle/wrapper/gradle-wrapper.properties || ! -f gradle/wrapper/gradle-wrapper.jar ]]; then
-            gradle wrapper --gradle-version 8.9 --distribution-type bin
-          fi
+          gradle wrapper --gradle-version 9.7.0 --distribution-type bin
           chmod +x gradlew
           ./gradlew --version
 
-      - name: Validate project data and bundled JavaScript
+      - name: Validate project data, XML and bundled JavaScript
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
         run: |
@@ -131,7 +126,8 @@ jobs:
           import json, re, xml.etree.ElementTree as ET
           from pathlib import Path
           base = Path("app/src/main")
-          for p in base.rglob("*.xml"):
+          xml_files = list(base.rglob("*.xml"))
+          for p in xml_files:
               ET.parse(p)
           data = json.loads((base / "assets/data/science_topics.json").read_text(encoding="utf-8"))
           slugs = [x.get("slug") for x in data]
@@ -156,15 +152,17 @@ jobs:
               raise SystemExit("Process-wide WebView pauseTimers() is not allowed")
           if "SettingsPage(" not in main or "onReset =" not in main or "Restore default settings" not in main:
               raise SystemExit("Settings redesign/reset flow missing")
-          if 'versionName = "1.7.3"' not in Path("app/build.gradle.kts").read_text(encoding="utf-8"):
-              raise SystemExit("App version metadata mismatch")
+          if "seen_new_categories" not in main or "seenNewCategories" not in main:
+              raise SystemExit("Visited category NEW badge persistence is missing")
           html = (base / "assets/lab/index.html").read_text(encoding="utf-8")
           buttons = set(re.findall(r'<button data-id="([a-z0-9-]+)"', html))
           defs = html.split("const defs={", 1)[1].split("};\nconst uiText=", 1)[0]
-          registry = set(re.findall(r"(?:^|,)\s*['\"]?([a-z][a-z0-9-]*)['\"]?\s*:", defs))
+          registry = set(re.findall(r'''(?:^|,)\s*['\"]?([a-z][a-z0-9-]*)['\"]?\s*:''', defs))
           if len(buttons) < 48 or buttons - registry:
               raise SystemExit(f"3D scene registry mismatch: buttons={len(buttons)}, missing={sorted(buttons-registry)}")
-          print(f"Validated {len(data)} lessons, 118 elements, {len(buttons)} 3D scenes and {len(list(base.rglob('*.xml')))} XML files")
+          if "webglcontextrestored" not in html or "renderer.dispose()" not in html:
+              raise SystemExit("3D WebGL recovery or cleanup hook is missing")
+          print(f"Validated {len(data)} lessons, 118 elements, {len(buttons)} 3D scenes and {len(xml_files)} XML files")
           PY
           node --check app/src/main/assets/lab/three.module.js
           python3 - <<'PY'
@@ -184,6 +182,10 @@ jobs:
       - name: Run unit tests
         working-directory: ${{ steps.project.outputs.dir }}
         run: ./gradlew --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
+
+      - name: Run Android lint
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: ./gradlew --no-daemon --console=plain --stacktrace :app:lintDebug
 
       - name: Verify unit test reports
         working-directory: ${{ steps.project.outputs.dir }}
@@ -228,10 +230,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-1.7.3-build-results
+          name: Spectrum-1.7.4-build-results
           path: |
             ${{ steps.project.outputs.dir }}/app/build/outputs/apk/**/*.apk
             ${{ steps.project.outputs.dir }}/app/build/test-results/**
+            ${{ steps.project.outputs.dir }}/app/build/reports/lint-results-debug.html
             ${{ steps.project.outputs.dir }}/apk-sha256.txt
           if-no-files-found: warn
           retention-days: 30
