@@ -1,12 +1,11 @@
-
-name: Spectrum 1.6.7 Android Build
+name: Spectrum 1.6.8 Android Build
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
     paths:
-      - 'Spectrum_1.6.7_Android_Project.zip'
+      - 'Spectrum_1.6.8_Android_Project.zip'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -18,10 +17,9 @@ concurrency:
 
 jobs:
   build:
-    name: Validate, test and build Spectrum 1.6.7
+    name: Validate, test and build Spectrum 1.6.8
     runs-on: ubuntu-latest
     timeout-minutes: 60
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,7 +49,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Safely extract exact 1.6.7 source archive
+      - name: Safely extract exact 1.6.8 source archive
         id: project
         shell: bash
         run: |
@@ -59,56 +57,39 @@ jobs:
           python3 - <<'PY'
           import os, stat, zipfile
           from pathlib import Path, PurePosixPath
-
-          archive = Path("Spectrum_1.6.7_Android_Project.zip")
+          archive = Path("Spectrum_1.6.8_Android_Project.zip")
           if not archive.is_file():
               raise SystemExit(f"Missing required archive: {archive}")
-
-          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-167"
+          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-168"
           out.mkdir(parents=True, exist_ok=True)
-
           with zipfile.ZipFile(archive) as zf:
               bad = zf.testzip()
               if bad:
                   raise SystemExit(f"Corrupt ZIP member: {bad}")
-
               names = zf.namelist()
-              settings = [
-                  n for n in names
-                  if PurePosixPath(n).name == "settings.gradle.kts"
-              ]
-
+              settings = [n for n in names if PurePosixPath(n).name == "settings.gradle.kts"]
               matches = []
               for item in settings:
                   prefix = str(PurePosixPath(item).parent)
                   build = (prefix + "/" if prefix != "." else "") + "app/build.gradle.kts"
-                  if build in names and 'versionName = "1.6.7"' in zf.read(build).decode("utf-8", "replace"):
+                  if build in names and 'versionName = "1.6.8"' in zf.read(build).decode("utf-8", "replace"):
                       matches.append(item)
-
               if len(matches) != 1:
-                  raise SystemExit(
-                      f"Expected exactly one 1.6.7 Android project root; found {len(matches)}"
-                  )
-
+                  raise SystemExit(f"Expected exactly one 1.6.8 Android project root; found {len(matches)}")
               for info in zf.infolist():
                   name = info.filename.replace("\\", "/")
                   path = PurePosixPath(name)
                   mode = info.external_attr >> 16
                   if path.is_absolute() or ".." in path.parts or stat.S_ISLNK(mode):
                       raise SystemExit(f"Unsafe ZIP entry rejected: {info.filename}")
-
               zf.extractall(out)
-
           project = (out / str(PurePosixPath(matches[0]).parent)).resolve()
           if not project.is_relative_to(out.resolve()):
               raise SystemExit("Project root escaped extraction directory")
-
           if not (project / "app/src/main/AndroidManifest.xml").is_file():
               raise SystemExit("Android manifest missing from extracted project")
-
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"dir={project}\n")
-
           print(f"Validated project root: {project}")
           PY
 
@@ -117,8 +98,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 20' app/build.gradle.kts
-          grep -Fq 'versionName = "1.6.7"' app/build.gradle.kts
+          grep -Fq 'versionCode = 21' app/build.gradle.kts
+          grep -Fq 'versionName = "1.6.8"' app/build.gradle.kts
           grep -Fq 'applicationId = "com.elyionn.spectrum"' app/build.gradle.kts
           grep -Fq 'namespace = "com.elyionn.spektrum"' app/build.gradle.kts
           test -s app/src/test/java/com/elyionn/spektrum/PeriodicTableDataTest.kt
@@ -142,58 +123,37 @@ jobs:
           python3 - <<'PY'
           import json, re, xml.etree.ElementTree as ET
           from pathlib import Path
-
           base = Path("app/src/main")
           xmls = list(base.rglob("*.xml"))
-          for p in xmls:
-              ET.parse(p)
-
-          data = json.loads(
-              (base / "assets/data/science_topics.json").read_text(encoding="utf-8")
-          )
-
+          for p in xmls: ET.parse(p)
+          data = json.loads((base / "assets/data/science_topics.json").read_text(encoding="utf-8"))
           slugs = [x.get("slug") for x in data]
-          if len(data) < 100 or len(slugs) != len(set(slugs)) or any(
-              not x.get(k) for x in data
-              for k in ("title", "lead", "how", "life", "facts")
-          ):
-              raise SystemExit("Science Atlas data is incomplete or has duplicate slugs")
-
-          src = (
-              base / "java/com/elyionn/spektrum/PeriodicTableData.kt"
-          ).read_text(encoding="utf-8")
-
-          block = src.split("val elementRows = listOf(", 1)[1].split(
-              ").map { it.split", 1
-          )[0]
-
+          required = ("slug", "title", "category", "summary", "lead", "how", "life", "facts")
+          if len(data) != 116 or len(slugs) != len(set(slugs)) or any(not x.get(k) for x in data for k in required):
+              raise SystemExit("Science Atlas must contain 116 complete lessons with unique slugs")
+          categories = {"biyoloji": 21, "fizik": 21, "kimya": 18, "matematik": 16, "uzay": 16, "elektronik": 15, "yer_bilimleri": 9}
+          counts = {}
+          for item in data: counts[item["category"]] = counts.get(item["category"], 0) + 1
+          if counts != categories:
+              raise SystemExit(f"Unexpected category totals: {counts}")
+          added = [x for x in data if x.get("isNew") is True]
+          if len(added) != 14 or any(len(x.get("sources", [])) < 2 or any(not s.get("url", "").startswith("https://") for s in x.get("sources", [])) for x in added):
+              raise SystemExit("Expected 14 new lessons, each with at least two HTTPS sources")
+          src = (base / "java/com/elyionn/spektrum/PeriodicTableData.kt").read_text(encoding="utf-8")
+          block = src.split("val elementRows = listOf(", 1)[1].split(").map { it.split", 1)[0]
           rows = re.findall(r'"([A-Z][a-z]?)\|[^|]+\|(\d+)\|', block)
-
           if len(rows) != 118 or sorted(int(n) for _, n in rows) != list(range(1, 119)):
-              raise SystemExit(
-                  f"Expected exactly 118 periodic-table records; got {len(rows)}"
-              )
-
+              raise SystemExit(f"Expected exactly 118 periodic-table records; got {len(rows)}")
           layout = src.split("val periodicTableRows:", 1)[1].split("\n)", 1)[0]
           if len(re.findall(r"listOf<Int\?>\(", layout)) < 2:
               raise SystemExit("Periodic-table layout declaration missing")
-
-          main = (
-              base / "java/com/elyionn/spektrum/MainActivity.kt"
-          ).read_text(encoding="utf-8")
-
+          main = (base / "java/com/elyionn/spektrum/MainActivity.kt").read_text(encoding="utf-8")
           if "rememberInfiniteTransition" in main or "animateFloat(" in main:
               raise SystemExit("Unexpected permanent Compose animation in MainActivity")
-
           if "let rot=0,drag=false,px=0,auto=false;" not in main:
               raise SystemExit("Embedded atom scene must default to on-demand rendering")
-
-          print(
-              f"Validated {len(xmls)} XML files, {len(data)} unique lessons, "
-              "118 elements and idle-rendering guards"
-          )
+          print(f"Validated {len(xmls)} XML files, {len(data)} unique lessons, 118 elements and idle-rendering guards")
           PY
-
           node --check app/src/main/assets/lab/three.module.js
 
       - name: Compile Kotlin
@@ -211,27 +171,20 @@ jobs:
           set -euo pipefail
           REPORT="app/build/test-results/testDebugUnitTest"
           test -d "$REPORT"
-
           python3 - "$REPORT" <<'PY'
           import sys, xml.etree.ElementTree as ET
           from pathlib import Path
-
           files = list(Path(sys.argv[1]).glob("TEST-*.xml"))
           if not files:
               raise SystemExit("No JUnit XML reports found; test task may have been NO-SOURCE")
-
           total = failures = errors = 0
           for p in files:
               r = ET.parse(p).getroot()
               total += int(r.attrib.get("tests", 0))
               failures += int(r.attrib.get("failures", 0))
               errors += int(r.attrib.get("errors", 0))
-
           if total < 7 or failures or errors:
-              raise SystemExit(
-                  f"JUnit report invalid: tests={total}, failures={failures}, errors={errors}"
-              )
-
+              raise SystemExit(f"JUnit report invalid: tests={total}, failures={failures}, errors={errors}")
           print(f"JUnit passed: {total} tests")
           PY
 
@@ -244,24 +197,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           DEBUG_APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
           RELEASE_APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
-
           test -s "$DEBUG_APK" && test -s "$RELEASE_APK"
           unzip -tq "$DEBUG_APK"
           unzip -tq "$RELEASE_APK"
-
           test "$(apkanalyzer manifest application-id "$DEBUG_APK")" = "com.elyionn.spectrum.debug"
           test "$(apkanalyzer manifest application-id "$RELEASE_APK")" = "com.elyionn.spectrum"
-
           sha256sum "$DEBUG_APK" "$RELEASE_APK" | tee apk-sha256.txt
 
       - name: Upload APKs, test reports and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-1.6.7-build-results
+          name: Spectrum-1.6.8-build-results
           path: |
             ${{ steps.project.outputs.dir }}/app/build/outputs/apk/**/*.apk
             ${{ steps.project.outputs.dir }}/app/build/test-results/**
