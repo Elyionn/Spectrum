@@ -108,6 +108,45 @@ jobs:
           print(f"ZIP validated and extracted successfully: {project}")
           PY
 
+      - name: Repair known MainActivity.kt issues and inspect line 14
+        working-directory: ${{ steps.project.outputs.dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          main_path = Path("app/src/main/java/com/elyionn/spektrum/MainActivity.kt")
+          text = main_path.read_text(encoding="utf-8")
+          lines = text.splitlines()
+
+          print("=== MainActivity.kt lines 10-20 ===")
+          for idx in range(max(0, 9), min(len(lines), 20)):
+              print(f"{idx + 1}: {lines[idx]}")
+
+          if "import android.webkit.RenderProcessGoneDetail" not in text:
+              if "import android.webkit.WebView" in text:
+                  text = text.replace(
+                      "import android.webkit.WebView",
+                      "import android.webkit.RenderProcessGoneDetail\nimport android.webkit.WebView",
+                      1,
+                  )
+              else:
+                  text = re.sub(r"(package\s+[^\r\n]+\r?\n)", r"\1\nimport android.webkit.RenderProcessGoneDetail\n", text, count=1)
+
+          text = re.sub(
+              r"override\s+fun\s+onRenderProcessGone\s*\(\s*view\s*:\s*WebView\s*,\s*detail\s*:\s*RenderProcessGoneDetail\s*\)",
+              "override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail)",
+              text,
+          )
+          text = re.sub(r"(?<!\.)\bdidCrash\b(?!\s*\()", "detail.didCrash()", text)
+          text = re.sub(r"(?<!\.)\brendererPriorityAtExit\b(?!\s*\()", "detail.rendererPriorityAtExit()", text)
+
+          main_path.write_text(text + ("\n" if not text.endswith("\n") else ""), encoding="utf-8")
+          print("Repaired RenderProcessGoneDetail imports and detail calls in MainActivity.kt")
+          PY
+
       - name: Verify version and application identity
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
@@ -273,4 +312,4 @@ jobs:
             ${{ steps.project.outputs.dir }}/apk-sha256.txt
           if-no-files-found: warn
           retention-days: 30
-         
+          
