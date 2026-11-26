@@ -1,11 +1,11 @@
-name: Spectrum 1.6.8 Android Build
+name: Spectrum 1.6.9 Android Build
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
     paths:
-      - 'Spectrum_1.6.8_Android_Project.zip'
+      - 'Spectrum_1.6.9_Android_Project.zip'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Validate, test and build Spectrum 1.6.8
+    name: Validate, test and build Spectrum 1.6.9
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -49,7 +49,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Safely extract exact 1.6.8 source archive
+      - name: Safely extract exact 1.6.9 source archive
         id: project
         shell: bash
         run: |
@@ -57,7 +57,7 @@ jobs:
           python3 - <<'PY'
           import os, stat, zipfile
           from pathlib import Path, PurePosixPath
-          archive = Path("Spectrum_1.6.8_Android_Project.zip")
+          archive = Path("Spectrum_1.6.9_Android_Project.zip")
           if not archive.is_file():
               raise SystemExit(f"Missing required archive: {archive}")
           out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-168"
@@ -72,10 +72,10 @@ jobs:
               for item in settings:
                   prefix = str(PurePosixPath(item).parent)
                   build = (prefix + "/" if prefix != "." else "") + "app/build.gradle.kts"
-                  if build in names and 'versionName = "1.6.8"' in zf.read(build).decode("utf-8", "replace"):
+                  if build in names and 'versionName = "1.6.9"' in zf.read(build).decode("utf-8", "replace"):
                       matches.append(item)
               if len(matches) != 1:
-                  raise SystemExit(f"Expected exactly one 1.6.8 Android project root; found {len(matches)}")
+                  raise SystemExit(f"Expected exactly one 1.6.9 Android project root; found {len(matches)}")
               for info in zf.infolist():
                   name = info.filename.replace("\\", "/")
                   path = PurePosixPath(name)
@@ -98,8 +98,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 21' app/build.gradle.kts
-          grep -Fq 'versionName = "1.6.8"' app/build.gradle.kts
+          grep -Fq 'versionCode = 22' app/build.gradle.kts
+          grep -Fq 'versionName = "1.6.9"' app/build.gradle.kts
           grep -Fq 'applicationId = "com.elyionn.spectrum"' app/build.gradle.kts
           grep -Fq 'namespace = "com.elyionn.spektrum"' app/build.gradle.kts
           test -s app/src/test/java/com/elyionn/spektrum/PeriodicTableDataTest.kt
@@ -129,16 +129,16 @@ jobs:
           data = json.loads((base / "assets/data/science_topics.json").read_text(encoding="utf-8"))
           slugs = [x.get("slug") for x in data]
           required = ("slug", "title", "category", "summary", "lead", "how", "life", "facts")
-          if len(data) != 116 or len(slugs) != len(set(slugs)) or any(not x.get(k) for x in data for k in required):
-              raise SystemExit("Science Atlas must contain 116 complete lessons with unique slugs")
-          categories = {"biyoloji": 21, "fizik": 21, "kimya": 18, "matematik": 16, "uzay": 16, "elektronik": 15, "yer_bilimleri": 9}
+          if len(data) != 151 or len(slugs) != len(set(slugs)) or any(not x.get(k) for x in data for k in required):
+              raise SystemExit("Science Atlas must contain 151 complete lessons with unique slugs")
+          categories = {"biyoloji": 26, "fizik": 26, "kimya": 23, "matematik": 21, "uzay": 21, "elektronik": 20, "yer_bilimleri": 14}
           counts = {}
           for item in data: counts[item["category"]] = counts.get(item["category"], 0) + 1
           if counts != categories:
               raise SystemExit(f"Unexpected category totals: {counts}")
           added = [x for x in data if x.get("isNew") is True]
-          if len(added) != 14 or any(len(x.get("sources", [])) < 2 or any(not s.get("url", "").startswith("https://") for s in x.get("sources", [])) for x in added):
-              raise SystemExit("Expected 14 new lessons, each with at least two HTTPS sources")
+          if len(added) != 35 or any(len(x.get("sources", [])) < 2 or any(not s.get("url", "").startswith("https://") for s in x.get("sources", [])) for x in added):
+              raise SystemExit("Expected 35 new lessons, each with at least two HTTPS sources")
           src = (base / "java/com/elyionn/spektrum/PeriodicTableData.kt").read_text(encoding="utf-8")
           block = src.split("val elementRows = listOf(", 1)[1].split(").map { it.split", 1)[0]
           rows = re.findall(r'"([A-Z][a-z]?)\|[^|]+\|(\d+)\|', block)
@@ -155,6 +155,23 @@ jobs:
           print(f"Validated {len(xmls)} XML files, {len(data)} unique lessons, 118 elements and idle-rendering guards")
           PY
           node --check app/src/main/assets/lab/three.module.js
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          html = Path("app/src/main/assets/lab/index.html").read_text(encoding="utf-8")
+          buttons = set(re.findall(r'<button data-id="([a-z0-9-]+)"', html))
+          block = html.split("const defs={",1)[1].split("};\nconst uiText=",1)[0]
+          registry = set(re.findall(r"(?:^|,)\s*[\'\"]?([a-z][a-z0-9-]*)[\'\"]?\s*:", block))
+          missing = buttons - registry
+          if missing: raise SystemExit(f"3D models missing registry entries: {sorted(missing)}")
+          if len(buttons) < 48: raise SystemExit(f"Expected at least 48 3D scenes, got {len(buttons)}")
+          print(f"Validated {len(buttons)} 3D scene buttons against registry")
+          import re
+          match = re.search(r'<script type="module">([\s\S]*?)</script>', html)
+          if not match: raise SystemExit("Three.js module script not found")
+          Path("/tmp/spectrum-lab-module.mjs").write_text(match.group(1), encoding="utf-8")
+          PY
+          node --check /tmp/spectrum-lab-module.mjs
 
       - name: Compile Kotlin
         working-directory: ${{ steps.project.outputs.dir }}
@@ -210,7 +227,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-1.6.8-build-results
+          name: Spectrum-1.6.9-build-results
           path: |
             ${{ steps.project.outputs.dir }}/app/build/outputs/apk/**/*.apk
             ${{ steps.project.outputs.dir }}/app/build/test-results/**
