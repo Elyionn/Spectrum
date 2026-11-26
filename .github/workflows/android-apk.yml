@@ -251,5 +251,5 @@ jobs:
             ${{ steps.project.outputs.dir }}/app/build/reports/lint-results-debug.html
             ${{ steps.project.outputs.dir }}/apk-sha256.txt
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 30 4p
           
