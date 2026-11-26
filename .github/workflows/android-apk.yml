@@ -122,6 +122,27 @@ jobs:
           grep -Fq 'webglcontextrestored' app/src/main/assets/lab/index.html
           grep -Fq 'setPixelRatio(Math.min(window.devicePixelRatio||1,1.0))' app/src/main/assets/lab/index.html
 
+      - name: Patch kotlinOptions to compilerOptions DSL (Kotlin 2.4)
+        working-directory: ${{ steps.project.outputs.dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("app/build.gradle.kts")
+          text = p.read_text(encoding="utf-8")
+          old = '    kotlinOptions { jvmTarget = "17" }\n'
+          if old in text:
+              text = text.replace(old, "", 1)
+              text = text.rstrip("\n") + "\n\nkotlin {\n    compilerOptions {\n        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)\n    }\n}\n"
+              p.write_text(text, encoding="utf-8")
+              print("Patched: kotlinOptions replaced with kotlin { compilerOptions { ... } }")
+          else:
+              print("kotlinOptions not found; nothing to patch")
+          PY
+          grep -n "kotlinOptions" app/build.gradle.kts && exit 1 || true
+          tail -8 app/build.gradle.kts
+
       - name: Generate Gradle wrapper
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
