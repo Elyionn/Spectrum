@@ -1,11 +1,11 @@
-name: Spectrum 1.6.9 Android Build
+name: Spectrum 1.7.0 Android Build
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
     paths:
-      - 'Spectrum_1.6.9_Android_Project.zip'
+      - 'Spectrum_1.7.0_Android_Project.zip'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Validate, test and build Spectrum 1.6.9
+    name: Validate, test and build Spectrum 1.7.0
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -49,7 +49,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Safely extract exact 1.6.9 source archive
+      - name: Safely extract exact 1.7.0 source archive
         id: project
         shell: bash
         run: |
@@ -57,10 +57,10 @@ jobs:
           python3 - <<'PY'
           import os, stat, zipfile
           from pathlib import Path, PurePosixPath
-          archive = Path("Spectrum_1.6.9_Android_Project.zip")
+          archive = Path("Spectrum_1.7.0_Android_Project.zip")
           if not archive.is_file():
               raise SystemExit(f"Missing required archive: {archive}")
-          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-168"
+          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-170"
           out.mkdir(parents=True, exist_ok=True)
           with zipfile.ZipFile(archive) as zf:
               bad = zf.testzip()
@@ -72,10 +72,10 @@ jobs:
               for item in settings:
                   prefix = str(PurePosixPath(item).parent)
                   build = (prefix + "/" if prefix != "." else "") + "app/build.gradle.kts"
-                  if build in names and 'versionName = "1.6.9"' in zf.read(build).decode("utf-8", "replace"):
+                  if build in names and 'versionName = "1.7.0"' in zf.read(build).decode("utf-8", "replace"):
                       matches.append(item)
               if len(matches) != 1:
-                  raise SystemExit(f"Expected exactly one 1.6.9 Android project root; found {len(matches)}")
+                  raise SystemExit(f"Expected exactly one 1.7.0 Android project root; found {len(matches)}")
               for info in zf.infolist():
                   name = info.filename.replace("\\", "/")
                   path = PurePosixPath(name)
@@ -98,8 +98,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 22' app/build.gradle.kts
-          grep -Fq 'versionName = "1.6.9"' app/build.gradle.kts
+          grep -Fq 'versionCode = 23' app/build.gradle.kts
+          grep -Fq 'versionName = "1.7.0"' app/build.gradle.kts
           grep -Fq 'applicationId = "com.elyionn.spectrum"' app/build.gradle.kts
           grep -Fq 'namespace = "com.elyionn.spektrum"' app/build.gradle.kts
           test -s app/src/test/java/com/elyionn/spektrum/PeriodicTableDataTest.kt
@@ -227,7 +227,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-1.6.9-build-results
+          name: Spectrum-1.7.0-build-results
           path: |
             ${{ steps.project.outputs.dir }}/app/build/outputs/apk/**/*.apk
             ${{ steps.project.outputs.dir }}/app/build/test-results/**
