@@ -51,7 +51,7 @@ jobs:
           set -o pipefail
           "$SDKMANAGER" --install \
             "platform-tools" \
-            "platforms;android-37" \
+            "platforms;android-37.0" \
             "build-tools;36.0.0"
 
       - name: Set up Gradle 9.7.0
@@ -104,7 +104,7 @@ jobs:
               if not (project / required).is_file():
                   raise SystemExit(f"ERROR: Required project file missing after extraction: {required}")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-              f.write(f"dir={project}\\n")
+              f.write(f"dir={project}\n")
           print(f"ZIP validated and extracted successfully: {project}")
           PY
 
@@ -251,5 +251,4 @@ jobs:
             ${{ steps.project.outputs.dir }}/app/build/reports/lint-results-debug.html
             ${{ steps.project.outputs.dir }}/apk-sha256.txt
           if-no-files-found: warn
-          retention-days: 30 
-          
+          retention-days: 30
