@@ -5,7 +5,7 @@ on:
   push:
     branches: [main, master]
     paths:
-      - 'Spectrum_1.7.1_Android_Project.zip'
+      - 'Spectrum_1.7.1_Android_Project*.zip'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -57,9 +57,23 @@ jobs:
           python3 - <<'PY'
           import os, stat, zipfile
           from pathlib import Path, PurePosixPath
-          archive = Path("Spectrum_1.7.1_Android_Project.zip")
-          if not archive.is_file():
-              raise SystemExit(f"Missing required archive: {archive}")
+          candidates = [
+              Path("Spectrum_1.7.1_Android_Project.zip"),
+              Path("Spectrum_1.7.1_Android_Project_FIXED.zip"),
+              Path("Spectrum_1.7.1_Android_Project_MATCHED.zip"),
+          ]
+          present = [p for p in candidates if p.is_file()]
+          if not present:
+              raise SystemExit(
+                  "Missing source ZIP. Upload Spectrum_1.7.1_Android_Project_MATCHED.zip "
+                  "to the repository root."
+              )
+          if len(present) > 1:
+              raise SystemExit(
+                  "Found multiple Spectrum 1.7.1 source ZIP files. Keep only one in the repository root."
+              )
+          archive = present[0]
+          print(f"Using source archive: {archive}")
           out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-171"
           out.mkdir(parents=True, exist_ok=True)
           with zipfile.ZipFile(archive) as zf:
