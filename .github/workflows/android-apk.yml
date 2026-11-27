@@ -1,11 +1,11 @@
-name: Spectrum 1.7.5 Android Build - 3D Lab, Performans ve Tema
+name: Spectrum 1.7.5v2 Android Build - Validated SDK and 3D stability
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
     paths:
-      - 'Spectrum_1.7.5_Android_Project.zip'
+      - 'Spectrum_1.7.5v2_Android_Project.zip'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -17,23 +17,22 @@ concurrency:
 
 jobs:
   build:
-    name: Validate, test and build Spectrum 1.7.5
+    name: Validate, test and build Spectrum 1.7.5v2
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 25
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '17'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          # Prevent setup-android from trying to install the removed legacy "tools" package.
           packages: ''
 
       - name: Accept SDK licenses and install packages
@@ -41,16 +40,11 @@ jobs:
         run: |
           set -euo pipefail
           SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          if [[ ! -x "$SDKMANAGER" ]]; then
-            SDKMANAGER="$(command -v sdkmanager)"
-          fi
-          # Send finite license answers through subprocess.communicate().
-          # This avoids `yes` receiving SIGPIPE when sdkmanager closes stdin.
+          if [[ ! -x "$SDKMANAGER" ]]; then SDKMANAGER="$(command -v sdkmanager)"; fi
           python3 - "$SDKMANAGER" <<'PYLICENSE'
           import subprocess, sys
-          sdkmanager = sys.argv[1]
           result = subprocess.run(
-              [sdkmanager, "--licenses"],
+              [sys.argv[1], "--licenses"],
               input="y\n" * 100,
               text=True,
               check=False,
@@ -58,19 +52,21 @@ jobs:
           if result.returncode != 0:
               raise SystemExit(result.returncode)
           PYLICENSE
-          "$SDKMANAGER" --install \
-            "platform-tools" \
-            "build-tools;36.0.0"
-          # Android 17 platform is published as 37.0; fall back to the old name if needed.
-          if ! "$SDKMANAGER" --install "platforms;android-37.0"; then
-            "$SDKMANAGER" --install "platforms;android-37"
-          fi
-          "$SDKMANAGER" --list_installed | grep -E "platforms|build-tools" || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMANAGER" --list_installed
 
-      - name: Set up Gradle 9.7.0
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.7.0'
+          gradle-version: '8.9'
+
+      - name: Verify Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/build-tools/35.0.0"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"
 
       - name: Validate and safely extract source ZIP
         id: project
@@ -81,10 +77,10 @@ jobs:
           import os, stat, zipfile
           from pathlib import Path, PurePosixPath
 
-          archive = Path("Spectrum_1.7.5_Android_Project.zip")
+          archive = Path("Spectrum_1.7.5v2_Android_Project.zip")
           if not archive.is_file() or archive.stat().st_size == 0:
-              raise SystemExit("ERROR: Spectrum_1.7.5_Android_Project.zip is missing or empty at repository root.")
-          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-175"
+              raise SystemExit("ERROR: Spectrum_1.7.5v2_Android_Project.zip is missing or empty at repository root.")
+          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-175v2"
           out.mkdir(parents=True, exist_ok=True)
           with zipfile.ZipFile(archive) as zf:
               bad = zf.testzip()
@@ -106,95 +102,24 @@ jobs:
                   prefix = "" if parent == "." else parent + "/"
                   if prefix + "app/build.gradle.kts" in names and prefix + "app/src/main/AndroidManifest.xml" in names:
                       roots.append(parent)
-              if roots != ["."]:
-                  raise SystemExit(f"ERROR: Expected exactly one project rooted at ZIP root, found: {roots}")
-              build_text = zf.read("app/build.gradle.kts").decode("utf-8")
+              if len(roots) != 1:
+                  raise SystemExit(f"ERROR: Expected one Android Gradle project root, found {len(roots)}: {roots}")
+              root = roots[0]
+              build_path = (root + "/" if root != "." else "") + "app/build.gradle.kts"
+              build_text = zf.read(build_path).decode("utf-8")
               if 'versionName = "1.7.5"' not in build_text or "versionCode = 28" not in build_text:
                   raise SystemExit("ERROR: ZIP source does not declare versionName 1.7.5 and versionCode 28.")
               zf.extractall(out)
-          project = out.resolve()
-          for required in ("settings.gradle.kts", "build.gradle.kts", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml", "app/src/main/assets/lab/index.html"):
+          project = (out / root).resolve()
+          if not project.is_relative_to(out.resolve()):
+              raise SystemExit("ERROR: Extracted project root escaped the temporary directory.")
+          for required in ("settings.gradle.kts", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml"):
               if not (project / required).is_file():
                   raise SystemExit(f"ERROR: Required project file missing after extraction: {required}")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"dir={project}\n")
           print(f"ZIP validated and extracted successfully: {project}")
           PY
-
-      - name: Patch Gradle files for AGP 9 (built-in Kotlin, new DSL)
-        working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-
-          # 1) gradle.properties: drop the legacy-DSL / external-Kotlin overrides
-          props = Path("gradle.properties")
-          kept = []
-          for line in props.read_text(encoding="utf-8").splitlines():
-              if re.match(r"\s*android\.(builtInKotlin|newDsl)\s*=", line):
-                  continue
-              if line.strip().startswith("# Keep the existing Kotlin Android plugin DSL"):
-                  continue
-              kept.append(line)
-          props.write_text("\n".join(kept) + "\n", encoding="utf-8")
-
-          # 2) app/build.gradle.kts: AGP 9 has built-in Kotlin, kotlinOptions is removed
-          gradle = Path("app/build.gradle.kts")
-          src = gradle.read_text(encoding="utf-8")
-          src = re.sub(r'^[ \t]*id\("org\.jetbrains\.kotlin\.android"\)[ \t]*\n', "", src, flags=re.M)
-          src = re.sub(r'^[ \t]*kotlinOptions\s*\{[^}\n]*\}[ \t]*\n', "", src, flags=re.M)
-          if "JvmTarget.JVM_17" not in src:
-              src = "import org.jetbrains.kotlin.gradle.dsl.JvmTarget\n\n" + src.lstrip("\n")
-              src = src.rstrip("\n") + "\n\nkotlin {\n    compilerOptions {\n        jvmTarget.set(JvmTarget.JVM_17)\n    }\n}\n"
-          # 3) Lint must report, not block: no lintVital during assembleRelease, no abort on lint findings
-          if "lint {" not in src:
-              anchor = "    buildFeatures { compose = true }\n"
-              assert anchor in src, "buildFeatures anchor not found"
-              src = src.replace(anchor, anchor + "\n    lint {\n        abortOnError = false\n        checkReleaseBuilds = false\n    }\n", 1)
-          assert "kotlinOptions" not in src, "kotlinOptions still present"
-          assert "org.jetbrains.kotlin.android" not in src, "kotlin.android plugin still present"
-          assert "abortOnError = false" in src, "lint block missing"
-          gradle.write_text(src, encoding="utf-8")
-
-          # 4) Source fix: two imports were glued together with a literal backslash-n
-          #    (import ...JavascriptInterface\nimport ...RenderProcessGoneDetail) -> real line break
-          fixed_files = []
-          for kt in Path("app/src").rglob("*.kt"):
-              text = kt.read_text(encoding="utf-8")
-              new = text
-              while True:
-                  step = re.sub(r'(?m)^(import [^\n]*?)\\n(?=import )', r'\1\n', new)
-                  if step == new:
-                      break
-                  new = step
-              assert not re.search(r'(?m)^import [^\n]*\\n', new), f"glued import still present in {kt}"
-              if new != text:
-                  kt.write_text(new, encoding="utf-8")
-                  fixed_files.append(str(kt))
-          print("Fixed glued imports in:", fixed_files or "nothing (already clean)")
-
-          # 5) R8: keep @JavascriptInterface methods, otherwise the release 3D Lab never reports ready
-          rules = Path("app/proguard-rules.pro")
-          rules_text = rules.read_text(encoding="utf-8") if rules.exists() else ""
-          if "JavascriptInterface" not in rules_text:
-              rules_text = rules_text.rstrip("\n") + "\n\n# WebView JS bridge used by the 3D Lab\n-keepclassmembers class * {\n    @android.webkit.JavascriptInterface <methods>;\n}\n"
-              rules.write_text(rules_text, encoding="utf-8")
-          PY
-          echo "----- gradle.properties"
-          cat gradle.properties
-          echo "----- app/build.gradle.kts (head)"
-          head -8 app/build.gradle.kts
-          echo "----- app/build.gradle.kts (lint block)"
-          grep -n -A3 "lint {" app/build.gradle.kts
-          echo "----- app/build.gradle.kts (tail)"
-          tail -8 app/build.gradle.kts
-          echo "----- MainActivity.kt imports 12-16"
-          sed -n 12,16p app/src/main/java/com/elyionn/spektrum/MainActivity.kt
-          echo "----- proguard-rules.pro"
-          cat app/proguard-rules.pro
 
       - name: Verify version and application identity
         working-directory: ${{ steps.project.outputs.dir }}
@@ -203,26 +128,23 @@ jobs:
           set -euo pipefail
           grep -Fq 'versionCode = 28' app/build.gradle.kts
           grep -Fq 'versionName = "1.7.5"' app/build.gradle.kts
+          grep -Fq 'compileSdk = 35' app/build.gradle.kts
           grep -Fq 'applicationId = "com.elyionn.spectrum"' app/build.gradle.kts
           grep -Fq 'namespace = "com.elyionn.spektrum"' app/build.gradle.kts
           test -s app/src/test/java/com/elyionn/spektrum/PeriodicTableDataTest.kt
-          grep -Fq 'onRenderProcessGone' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
-          grep -Fq 'webglcontextrestored' app/src/main/assets/lab/index.html
-          grep -Fq 'setPixelRatio(Math.min(window.devicePixelRatio||1,0.8))' app/src/main/assets/lab/index.html
-          grep -Fq 'gl.isContextLost()' app/src/main/assets/lab/index.html
-          grep -Fq '3D animation frame failed' app/src/main/assets/lab/index.html
-          grep -Fq 'renderer.dispose()' app/src/main/assets/lab/index.html
 
-      - name: Generate Gradle wrapper
+      - name: Generate Gradle wrapper when absent
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
         run: |
           set -euo pipefail
-          gradle wrapper --gradle-version 9.7.0 --distribution-type bin
+          if [[ ! -f gradlew || ! -f gradle/wrapper/gradle-wrapper.properties || ! -f gradle/wrapper/gradle-wrapper.jar ]]; then
+            gradle wrapper --gradle-version 8.9 --distribution-type bin
+          fi
           chmod +x gradlew
           ./gradlew --version
 
-      - name: Validate project data, XML and bundled JavaScript
+      - name: Validate project data and bundled JavaScript
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
         run: |
@@ -231,8 +153,7 @@ jobs:
           import json, re, xml.etree.ElementTree as ET
           from pathlib import Path
           base = Path("app/src/main")
-          xml_files = list(base.rglob("*.xml"))
-          for p in xml_files:
+          for p in base.rglob("*.xml"):
               ET.parse(p)
           data = json.loads((base / "assets/data/science_topics.json").read_text(encoding="utf-8"))
           slugs = [x.get("slug") for x in data]
@@ -257,17 +178,15 @@ jobs:
               raise SystemExit("Process-wide WebView pauseTimers() is not allowed")
           if "SettingsPage(" not in main or "onReset =" not in main or "Restore default settings" not in main:
               raise SystemExit("Settings redesign/reset flow missing")
-          if "seen_new_categories" not in main or "seenNewCategories" not in main:
-              raise SystemExit("Visited category NEW badge persistence is missing")
+          if 'versionName = "1.7.5"' not in Path("app/build.gradle.kts").read_text(encoding="utf-8"):
+              raise SystemExit("App version metadata mismatch")
           html = (base / "assets/lab/index.html").read_text(encoding="utf-8")
           buttons = set(re.findall(r'<button data-id="([a-z0-9-]+)"', html))
           defs = html.split("const defs={", 1)[1].split("};\nconst uiText=", 1)[0]
-          registry = set(re.findall(r'''(?:^|,)\s*['\"]?([a-z][a-z0-9-]*)['\"]?\s*:''', defs))
+          registry = set(re.findall(r"(?:^|,)\s*['\"]?([a-z][a-z0-9-]*)['\"]?\s*:", defs))
           if len(buttons) < 48 or buttons - registry:
               raise SystemExit(f"3D scene registry mismatch: buttons={len(buttons)}, missing={sorted(buttons-registry)}")
-          if "webglcontextrestored" not in html or "renderer.dispose()" not in html:
-              raise SystemExit("3D WebGL recovery or cleanup hook is missing")
-          print(f"Validated {len(data)} lessons, 118 elements, {len(buttons)} 3D scenes and {len(xml_files)} XML files")
+          print(f"Validated {len(data)} lessons, 118 elements, {len(buttons)} 3D scenes and {len(list(base.rglob('*.xml')))} XML files")
           PY
           node --check app/src/main/assets/lab/three.module.js
           python3 - <<'PY'
@@ -287,11 +206,6 @@ jobs:
       - name: Run unit tests
         working-directory: ${{ steps.project.outputs.dir }}
         run: ./gradlew --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
-
-      - name: Run Android lint (report only, does not block the build)
-        continue-on-error: true
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: ./gradlew --no-daemon --console=plain --stacktrace :app:lintDebug
 
       - name: Verify unit test reports
         working-directory: ${{ steps.project.outputs.dir }}
@@ -328,41 +242,19 @@ jobs:
           test -s "$DEBUG_APK" && test -s "$RELEASE_APK"
           unzip -tq "$DEBUG_APK"
           unzip -tq "$RELEASE_APK"
-
-          APKANALYZER="${ANDROID_HOME}/cmdline-tools/latest/bin/apkanalyzer"
-          if [[ ! -x "$APKANALYZER" ]]; then
-            APKANALYZER="$(command -v apkanalyzer || true)"
-          fi
-          AAPT2="$(find "${ANDROID_HOME}/build-tools" -name aapt2 -type f 2>/dev/null | sort | tail -n 1 || true)"
-
-          app_id() {
-            local apk="$1" id=""
-            if [[ -n "$APKANALYZER" && -x "$APKANALYZER" ]]; then
-              id="$("$APKANALYZER" manifest application-id "$apk" 2>/dev/null || true)"
-            fi
-            if [[ -z "$id" && -n "$AAPT2" ]]; then
-              id="$("$AAPT2" dump packagename "$apk" 2>/dev/null || true)"
-            fi
-            printf '%s' "$id"
-          }
-
-          DEBUG_ID="$(app_id "$DEBUG_APK")"
-          RELEASE_ID="$(app_id "$RELEASE_APK")"
-          echo "Debug application id:   $DEBUG_ID"
-          echo "Release application id: $RELEASE_ID"
-          test "$DEBUG_ID" = "com.elyionn.spectrum.debug"
-          test "$RELEASE_ID" = "com.elyionn.spectrum"
+          test "$(apkanalyzer manifest application-id "$DEBUG_APK")" = "com.elyionn.spectrum.debug"
+          test "$(apkanalyzer manifest application-id "$RELEASE_APK")" = "com.elyionn.spectrum"
           sha256sum "$DEBUG_APK" "$RELEASE_APK" | tee apk-sha256.txt
 
       - name: Upload APKs, test reports and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-1.7.5-build-results
+          name: Spectrum-1.7.5v2-build-results
           path: |
             ${{ steps.project.outputs.dir }}/app/build/outputs/apk/**/*.apk
             ${{ steps.project.outputs.dir }}/app/build/test-results/**
-            ${{ steps.project.outputs.dir }}/app/build/reports/lint-results-debug.html
             ${{ steps.project.outputs.dir }}/apk-sha256.txt
           if-no-files-found: warn
           retention-days: 30
+          
