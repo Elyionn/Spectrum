@@ -1,11 +1,11 @@
-name: Spectrum 1.7.6 Android Build
+name: Spectrum 1.7.7 Android Build
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
     paths:
-      - 'Spectrum_1.7.6_Android_Project.zip'
+      - 'Spectrum_1.7.7_Android_Project.zip'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Validate, test and build Spectrum 1.7.6
+    name: Validate, test and build Spectrum 1.7.7
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -71,10 +71,10 @@ jobs:
           python3 - <<'PY'
           import os, stat, zipfile
           from pathlib import Path, PurePosixPath
-          archive = Path("Spectrum_1.7.6_Android_Project.zip")
+          archive = Path("Spectrum_1.7.7_Android_Project.zip")
           if not archive.is_file() or archive.stat().st_size == 0:
               raise SystemExit("Source ZIP is missing or empty at repository root.")
-          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-176"
+          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-177"
           out.mkdir(parents=True, exist_ok=True)
           with zipfile.ZipFile(archive) as zf:
               bad = zf.testzip()
@@ -96,7 +96,7 @@ jobs:
               root = roots[0]
               prefix = "" if root == "." else root + "/"
               build = zf.read(prefix + "app/build.gradle.kts").decode("utf-8")
-              if 'versionName = "1.7.6"' not in build or "versionCode = 29" not in build: raise SystemExit("ZIP version metadata mismatch.")
+              if 'versionName = "1.7.7"' not in build or "versionCode = 30" not in build: raise SystemExit("ZIP version metadata mismatch.")
               zf.extractall(out)
           project = (out / root).resolve()
           if not project.is_relative_to(out.resolve()): raise SystemExit("Project root escaped extraction directory.")
@@ -111,14 +111,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 29' app/build.gradle.kts
-          grep -Fq 'versionName = "1.7.6"' app/build.gradle.kts
+          grep -Fq 'versionCode = 30' app/build.gradle.kts
+          grep -Fq 'versionName = "1.7.7"' app/build.gradle.kts
           grep -Fq 'compileSdk = 35' app/build.gradle.kts
           grep -Fq 'applicationId = "com.elyionn.spectrum"' app/build.gradle.kts
           grep -Fq 'namespace = "com.elyionn.spektrum"' app/build.gradle.kts
           grep -Fq 'onRenderProcessGone' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
           grep -Fq 'LAYER_TYPE_SOFTWARE' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
           grep -Fq "getContext('2d'" app/src/main/assets/lab/index.html
+          grep -Fq 'modelSearch' app/src/main/assets/lab/index.html
+          grep -Fq 'axesButton' app/src/main/assets/lab/index.html
+          grep -Fq 'categoryQuery' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
+          grep -Fq 'Nebula Teal' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
+          grep -Fq 'Solar Flare' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
+          grep -Fq 'sans-serif-medium' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
+          grep -Fq 'sans-serif-thin' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
+          grep -Fq 'coerceIn(0, 9)' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
           if grep -Eq 'WebGLRenderer|THREE\.|type="module"' app/src/main/assets/lab/index.html; then echo "Unexpected WebGL dependency remains"; exit 1; fi
           test ! -e app/src/main/assets/lab/three.module.js
 
@@ -164,9 +172,9 @@ jobs:
           if len(buttons) != 48 or len(set(buttons)) != 48: raise SystemExit(f"Expected 48 unique Canvas scenes, got {len(buttons)}")
           if "reportReady" not in html or "reportError" not in html or "pointerdown" not in html: raise SystemExit("3D bridge or touch interaction missing.")
           main = (base / "java/com/elyionn/spektrum/MainActivity.kt").read_text(encoding="utf-8")
-          for marker in ("onRenderProcessGone", "labInstance++", "casual", "sans-serif-black", "Midnight Violet", "Obsidian Ember"):
+          for marker in ("onRenderProcessGone", "labInstance++", "casual", "sans-serif-black", "sans-serif-medium", "sans-serif-thin", "Midnight Violet", "Obsidian Ember", "Nebula Teal", "Solar Flare", "categoryQuery"):
               if marker not in main: raise SystemExit(f"Kotlin feature missing: {marker}")
-          if 'versionName = "1.7.6"' not in Path("app/build.gradle.kts").read_text(encoding="utf-8"): raise SystemExit("App version metadata mismatch.")
+          if 'versionName = "1.7.7"' not in Path("app/build.gradle.kts").read_text(encoding="utf-8"): raise SystemExit("App version metadata mismatch.")
           print(f"Validated {len(data)} lessons, 118 elements, {len(buttons)} 3D scenes and Android XML resources.")
           PY
           python3 - <<'PY'
@@ -175,9 +183,9 @@ jobs:
           html=Path("app/src/main/assets/lab/index.html").read_text(encoding="utf-8")
           m=re.search(r"<script>([\s\S]*?)</script>",html)
           if not m: raise SystemExit("Canvas script not found")
-          Path("/tmp/spectrum-176-lab.js").write_text(m.group(1),encoding="utf-8")
+          Path("/tmp/spectrum-177-lab.js").write_text(m.group(1),encoding="utf-8")
           PY
-          node --check /tmp/spectrum-176-lab.js
+          node --check /tmp/spectrum-177-lab.js
           node scripts/test_lab_runtime.cjs
 
       - name: Compile Kotlin
@@ -227,7 +235,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-1.7.6-build-results
+          name: Spectrum-1.7.7-build-results
           path: |
             ${{ steps.project.outputs.dir }}/app/build/outputs/apk/**/*.apk
             ${{ steps.project.outputs.dir }}/app/build/test-results/**
