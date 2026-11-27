@@ -121,6 +121,45 @@ jobs:
           print(f"ZIP validated and extracted successfully: {project}")
           PY
 
+      - name: Patch Gradle files for AGP 9 (built-in Kotlin, new DSL)
+        working-directory: ${{ steps.project.outputs.dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          # 1) gradle.properties: drop the legacy-DSL / external-Kotlin overrides
+          props = Path("gradle.properties")
+          kept = []
+          for line in props.read_text(encoding="utf-8").splitlines():
+              if re.match(r"\s*android\.(builtInKotlin|newDsl)\s*=", line):
+                  continue
+              if line.strip().startswith("# Keep the existing Kotlin Android plugin DSL"):
+                  continue
+              kept.append(line)
+          props.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+          # 2) app/build.gradle.kts: AGP 9 has built-in Kotlin, kotlinOptions is removed
+          gradle = Path("app/build.gradle.kts")
+          src = gradle.read_text(encoding="utf-8")
+          src = re.sub(r'^[ \t]*id\("org\.jetbrains\.kotlin\.android"\)[ \t]*\n', "", src, flags=re.M)
+          src = re.sub(r'^[ \t]*kotlinOptions\s*\{[^}\n]*\}[ \t]*\n', "", src, flags=re.M)
+          if "JvmTarget.JVM_17" not in src:
+              src = "import org.jetbrains.kotlin.gradle.dsl.JvmTarget\n\n" + src.lstrip("\n")
+              src = src.rstrip("\n") + "\n\nkotlin {\n    compilerOptions {\n        jvmTarget.set(JvmTarget.JVM_17)\n    }\n}\n"
+          assert "kotlinOptions" not in src, "kotlinOptions still present"
+          assert "org.jetbrains.kotlin.android" not in src, "kotlin.android plugin still present"
+          gradle.write_text(src, encoding="utf-8")
+          PY
+          echo "----- gradle.properties"
+          cat gradle.properties
+          echo "----- app/build.gradle.kts (head)"
+          head -8 app/build.gradle.kts
+          echo "----- app/build.gradle.kts (tail)"
+          tail -8 app/build.gradle.kts
+
       - name: Verify version and application identity
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
