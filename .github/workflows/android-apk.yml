@@ -1,11 +1,11 @@
-name: Spectrum 1.7.4 Android Build - 3D Lab, Performans ve Tema
+name: Spectrum 1.7.5 Android Build - 3D Lab, Performans ve Tema
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
     paths:
-      - 'Spectrum_1.7.4_Android_Project.zip'
+      - 'Spectrum_1.7.5_Android_Project.zip'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Validate, test and build Spectrum 1.7.4
+    name: Validate, test and build Spectrum 1.7.5
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -44,14 +44,23 @@ jobs:
           if [[ ! -x "$SDKMANAGER" ]]; then
             SDKMANAGER="$(command -v sdkmanager)"
           fi
-          # Accept every license non-interactively. Disable pipefail only for
-          # this pipeline because `yes` can receive SIGPIPE after sdkmanager exits.
-          set +o pipefail
-          yes | "$SDKMANAGER" --licenses >/dev/null
-          set -o pipefail
+          # Send finite license answers through subprocess.communicate().
+          # This avoids `yes` receiving SIGPIPE when sdkmanager closes stdin.
+          python3 - "$SDKMANAGER" <<'PYLICENSE'
+          import subprocess, sys
+          sdkmanager = sys.argv[1]
+          result = subprocess.run(
+              [sdkmanager, "--licenses"],
+              input="y\n" * 100,
+              text=True,
+              check=False,
+          )
+          if result.returncode != 0:
+              raise SystemExit(result.returncode)
+          PYLICENSE
           "$SDKMANAGER" --install \
             "platform-tools" \
-            "platforms;android-37.0" \
+            "platforms;android-37" \
             "build-tools;36.0.0"
 
       - name: Set up Gradle 9.7.0
@@ -68,10 +77,10 @@ jobs:
           import os, stat, zipfile
           from pathlib import Path, PurePosixPath
 
-          archive = Path("Spectrum_1.7.4_Android_Project.zip")
+          archive = Path("Spectrum_1.7.5_Android_Project.zip")
           if not archive.is_file() or archive.stat().st_size == 0:
-              raise SystemExit("ERROR: Spectrum_1.7.4_Android_Project.zip is missing or empty at repository root.")
-          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-174"
+              raise SystemExit("ERROR: Spectrum_1.7.5_Android_Project.zip is missing or empty at repository root.")
+          out = Path(os.environ["RUNNER_TEMP"]) / "spectrum-175"
           out.mkdir(parents=True, exist_ok=True)
           with zipfile.ZipFile(archive) as zf:
               bad = zf.testzip()
@@ -96,8 +105,8 @@ jobs:
               if roots != ["."]:
                   raise SystemExit(f"ERROR: Expected exactly one project rooted at ZIP root, found: {roots}")
               build_text = zf.read("app/build.gradle.kts").decode("utf-8")
-              if 'versionName = "1.7.4"' not in build_text or "versionCode = 27" not in build_text:
-                  raise SystemExit("ERROR: ZIP source does not declare versionName 1.7.4 and versionCode 27.")
+              if 'versionName = "1.7.5"' not in build_text or "versionCode = 28" not in build_text:
+                  raise SystemExit("ERROR: ZIP source does not declare versionName 1.7.5 and versionCode 28.")
               zf.extractall(out)
           project = out.resolve()
           for required in ("settings.gradle.kts", "build.gradle.kts", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml", "app/src/main/assets/lab/index.html"):
@@ -108,79 +117,22 @@ jobs:
           print(f"ZIP validated and extracted successfully: {project}")
           PY
 
-      - name: Repair known MainActivity.kt issues and inspect line 14
-        working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-
-          main_path = Path("app/src/main/java/com/elyionn/spektrum/MainActivity.kt")
-          text = main_path.read_text(encoding="utf-8")
-          lines = text.splitlines()
-
-          print("=== MainActivity.kt lines 10-20 ===")
-          for idx in range(max(0, 9), min(len(lines), 20)):
-              print(f"{idx + 1}: {lines[idx]}")
-
-          if "import android.webkit.RenderProcessGoneDetail" not in text:
-              if "import android.webkit.WebView" in text:
-                  text = text.replace(
-                      "import android.webkit.WebView",
-                      "import android.webkit.RenderProcessGoneDetail\nimport android.webkit.WebView",
-                      1,
-                  )
-              else:
-                  text = re.sub(r"(package\s+[^\r\n]+\r?\n)", r"\1\nimport android.webkit.RenderProcessGoneDetail\n", text, count=1)
-
-          text = re.sub(
-              r"override\s+fun\s+onRenderProcessGone\s*\(\s*view\s*:\s*WebView\s*,\s*detail\s*:\s*RenderProcessGoneDetail\s*\)",
-              "override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail)",
-              text,
-          )
-          text = re.sub(r"(?<!\.)\bdidCrash\b(?!\s*\()", "detail.didCrash()", text)
-          text = re.sub(r"(?<!\.)\brendererPriorityAtExit\b(?!\s*\()", "detail.rendererPriorityAtExit()", text)
-
-          main_path.write_text(text + ("\n" if not text.endswith("\n") else ""), encoding="utf-8")
-          print("Repaired RenderProcessGoneDetail imports and detail calls in MainActivity.kt")
-          PY
-
       - name: Verify version and application identity
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 27' app/build.gradle.kts
-          grep -Fq 'versionName = "1.7.4"' app/build.gradle.kts
+          grep -Fq 'versionCode = 28' app/build.gradle.kts
+          grep -Fq 'versionName = "1.7.5"' app/build.gradle.kts
           grep -Fq 'applicationId = "com.elyionn.spectrum"' app/build.gradle.kts
           grep -Fq 'namespace = "com.elyionn.spektrum"' app/build.gradle.kts
           test -s app/src/test/java/com/elyionn/spektrum/PeriodicTableDataTest.kt
           grep -Fq 'onRenderProcessGone' app/src/main/java/com/elyionn/spektrum/MainActivity.kt
           grep -Fq 'webglcontextrestored' app/src/main/assets/lab/index.html
-          grep -Fq 'setPixelRatio(Math.min(window.devicePixelRatio||1,1.0))' app/src/main/assets/lab/index.html
-
-      - name: Patch kotlinOptions to compilerOptions DSL (Kotlin 2.4)
-        working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("app/build.gradle.kts")
-          text = p.read_text(encoding="utf-8")
-          old = '    kotlinOptions { jvmTarget = "17" }\n'
-          if old in text:
-              text = text.replace(old, "", 1)
-              text = text.rstrip("\n") + "\n\nkotlin {\n    compilerOptions {\n        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)\n    }\n}\n"
-              p.write_text(text, encoding="utf-8")
-              print("Patched: kotlinOptions replaced with kotlin { compilerOptions { ... } }")
-          else:
-              print("kotlinOptions not found; nothing to patch")
-          PY
-          grep -n "kotlinOptions" app/build.gradle.kts && exit 1 || true
-          tail -8 app/build.gradle.kts
+          grep -Fq 'setPixelRatio(Math.min(window.devicePixelRatio||1,0.8))' app/src/main/assets/lab/index.html
+          grep -Fq 'gl.isContextLost()' app/src/main/assets/lab/index.html
+          grep -Fq '3D animation frame failed' app/src/main/assets/lab/index.html
+          grep -Fq 'renderer.dispose()' app/src/main/assets/lab/index.html
 
       - name: Generate Gradle wrapper
         working-directory: ${{ steps.project.outputs.dir }}
@@ -304,7 +256,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Spectrum-1.7.4-build-results
+          name: Spectrum-1.7.5-build-results
           path: |
             ${{ steps.project.outputs.dir }}/app/build/outputs/apk/**/*.apk
             ${{ steps.project.outputs.dir }}/app/build/test-results/**
